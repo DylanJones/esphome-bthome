@@ -3,12 +3,13 @@ title: 2-Gang Switch
 description: Battery-powered dual switch with BTHome
 ---
 
-A battery-efficient dual switch using nRF52 that broadcasts both switch states via BTHome.
+A battery-efficient dual switch using nRF52 that broadcasts both switch states via BTHome. Uses a shared wakeup pin so either switch can wake the device from deep sleep.
 
 ## Hardware
 
 - Seeed XIAO BLE (nRF52840)
 - 2x Toggle switches or rocker switches
+- 2x 1N4148 diodes (for wakeup OR circuit)
 - 3.7V LiPo battery
 
 ## Wiring
@@ -17,8 +18,31 @@ A battery-efficient dual switch using nRF52 that broadcasts both switch states v
 |-----------|----------|
 | Switch 1 | D2 → GND |
 | Switch 2 | D3 → GND |
+| Wakeup (combined) | D4 |
 | Battery+ | BAT+ |
 | Battery- | BAT- |
+
+### Wakeup Circuit
+
+Wire both switch outputs to the wakeup pin using diodes to create an OR gate:
+
+```
+        D2 (Switch 1)
+            │
+           ─┴─
+            ▲  1N4148
+           ─┬─
+            │
+            ├──────── D4 (Wakeup) ── 10kΩ ── 3V3
+            │
+           ─┴─
+            ▲  1N4148
+           ─┬─
+            │
+        D3 (Switch 2)
+```
+
+When either switch is pressed (pulls to GND), D4 goes LOW and wakes the device.
 
 ## Configuration
 
@@ -62,7 +86,7 @@ sensor:
       return percent;
     update_interval: 60s
 
-# Switches
+# Switches on separate pins for individual state reading
 binary_sensor:
   - platform: gpio
     pin:
@@ -102,19 +126,23 @@ bthome:
       id: switch_2
       advertise_immediately: true
 
-# Deep sleep - wake on either switch
+# Deep sleep - wake on either switch via combined wakeup pin
 deep_sleep:
   run_duration: 15s
   sleep_duration: 5min
   wakeup_pin:
-    number: 2
+    number: 4
     mode: INPUT_PULLUP
     inverted: true
 ```
 
-:::note
-With this configuration, only switch 1 (D2) can wake the device from deep sleep. For both switches to wake, consider using an OR gate circuit or keeping the device awake longer.
-:::
+## How It Works
+
+1. **Normal operation**: Device sleeps, both switches readable on D2/D3
+2. **Either switch pressed**: D4 goes LOW via diode OR circuit
+3. **Device wakes**: Reads individual switch states from D2 and D3
+4. **Broadcasts**: Sends both switch states via BTHome
+5. **Returns to sleep**: After `run_duration` expires
 
 ## Power Consumption
 
