@@ -119,7 +119,7 @@ void BTHome::setup() {
   }
 
   // Configure NimBLE host callbacks
-  // Note: No GAP service needed for broadcast-only mode
+  // Note: Device name is included directly in advertisement data (build_advertisement_data_)
   ble_hs_cfg.sync_cb = nimble_on_sync_;
   ble_hs_cfg.reset_cb = nimble_on_reset_;
 
