@@ -309,7 +309,17 @@ class DeviceCard extends StatelessWidget {
       color: theme.colorScheme.surfaceContainerHighest,
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
-        onTap: needsKey ? () => _showKeyDialog(context) : null,
+        onTap: needsKey
+            ? () => _showKeyDialog(context)
+            : () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => DeviceDetailsScreen(
+                      device: device,
+                      scanner: scanner,
+                    ),
+                  ),
+                ),
         onLongPress: () => _copyAdvertisement(context),
         child: Padding(
           padding: const EdgeInsets.all(16),
@@ -575,7 +585,7 @@ class _MeasurementChip extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(
-            _getIcon(),
+            _getIconForType(measurement.type),
             size: 16,
             color: theme.colorScheme.onPrimaryContainer,
           ),
@@ -590,51 +600,295 @@ class _MeasurementChip extends StatelessWidget {
       ),
     );
   }
+}
 
-  IconData _getIcon() {
-    switch (measurement.type) {
-      case BthomeSensorType.temperature:
-      case BthomeSensorType.temperature01:
-      case BthomeSensorType.temperatureSint8:
-      case BthomeSensorType.temperatureSint8035:
-        return Icons.thermostat;
-      case BthomeSensorType.humidity:
-      case BthomeSensorType.humidityUint8:
-        return Icons.water_drop;
-      case BthomeSensorType.battery:
-        return Icons.battery_full;
-      case BthomeSensorType.batteryLow:
-        return Icons.battery_alert;
-      case BthomeSensorType.pressure:
-        return Icons.speed;
-      case BthomeSensorType.illuminance:
-        return Icons.light_mode;
-      case BthomeSensorType.motion:
-      case BthomeSensorType.moving:
-        return Icons.directions_walk;
-      case BthomeSensorType.door:
-      case BthomeSensorType.opening:
-        return Icons.door_front_door;
-      case BthomeSensorType.windowBinary:
-        return Icons.window;
-      case BthomeSensorType.power:
-      case BthomeSensorType.powerBinary:
-        return Icons.power;
-      case BthomeSensorType.voltage:
-      case BthomeSensorType.voltageUint8:
-        return Icons.bolt;
-      case BthomeSensorType.current:
-      case BthomeSensorType.currentSint16:
-        return Icons.electrical_services;
-      case BthomeSensorType.co2:
-        return Icons.co2;
-      case BthomeSensorType.smoke:
-        return Icons.smoke_free;
-      case BthomeSensorType.button:
-        return Icons.touch_app;
-      default:
-        return Icons.sensors;
+IconData _getIconForType(BthomeSensorType type) {
+  switch (type) {
+    case BthomeSensorType.temperature:
+    case BthomeSensorType.temperature01:
+    case BthomeSensorType.temperatureSint8:
+    case BthomeSensorType.temperatureSint8035:
+      return Icons.thermostat;
+    case BthomeSensorType.humidity:
+    case BthomeSensorType.humidityUint8:
+      return Icons.water_drop;
+    case BthomeSensorType.battery:
+      return Icons.battery_full;
+    case BthomeSensorType.batteryLow:
+      return Icons.battery_alert;
+    case BthomeSensorType.pressure:
+      return Icons.speed;
+    case BthomeSensorType.illuminance:
+      return Icons.light_mode;
+    case BthomeSensorType.motion:
+    case BthomeSensorType.moving:
+      return Icons.directions_walk;
+    case BthomeSensorType.door:
+    case BthomeSensorType.opening:
+      return Icons.door_front_door;
+    case BthomeSensorType.windowBinary:
+      return Icons.window;
+    case BthomeSensorType.power:
+    case BthomeSensorType.powerBinary:
+      return Icons.power;
+    case BthomeSensorType.voltage:
+    case BthomeSensorType.voltageUint8:
+      return Icons.bolt;
+    case BthomeSensorType.current:
+    case BthomeSensorType.currentSint16:
+      return Icons.electrical_services;
+    case BthomeSensorType.co2:
+      return Icons.co2;
+    case BthomeSensorType.smoke:
+      return Icons.smoke_free;
+    case BthomeSensorType.button:
+      return Icons.touch_app;
+    default:
+      return Icons.sensors;
+  }
+}
+
+class DeviceDetailsScreen extends StatefulWidget {
+  final BthomeDevice device;
+  final BleScanner scanner;
+
+  const DeviceDetailsScreen({
+    super.key,
+    required this.device,
+    required this.scanner,
+  });
+
+  @override
+  State<DeviceDetailsScreen> createState() => _DeviceDetailsScreenState();
+}
+
+class _DeviceDetailsScreenState extends State<DeviceDetailsScreen> {
+  late BthomeDevice _device;
+
+  @override
+  void initState() {
+    super.initState();
+    _device = widget.device;
+    widget.scanner.addListener(_onScannerUpdate);
+  }
+
+  void _onScannerUpdate() {
+    final updated = widget.scanner.devices.firstWhere(
+      (d) => d.macAddress == widget.device.macAddress,
+      orElse: () => _device,
+    );
+    if (mounted) {
+      setState(() => _device = updated);
     }
+  }
+
+  @override
+  void dispose() {
+    widget.scanner.removeListener(_onScannerUpdate);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(_device.name ?? 'Device Details'),
+      ),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          _buildDeviceInfo(theme),
+          const SizedBox(height: 24),
+          if (_device.measurements.isNotEmpty) ...[
+            Text(
+              'Measurements',
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 12),
+            ..._device.measurements.map((m) => _MeasurementTile(measurement: m)),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDeviceInfo(ThemeData theme) {
+    return Card(
+      elevation: 0,
+      color: theme.colorScheme.surfaceContainerHighest,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                _EncryptionBadge(device: _device),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _device.name ?? 'Unknown Device',
+                        style: theme.textTheme.titleLarge?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        _device.macAddress,
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: theme.colorScheme.outline,
+                          fontFamily: 'monospace',
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            const Divider(),
+            const SizedBox(height: 12),
+            _InfoRow(
+              icon: Icons.signal_cellular_alt,
+              label: 'Signal Strength',
+              value: '${_device.rssi} dBm',
+            ),
+            const SizedBox(height: 8),
+            _InfoRow(
+              icon: Icons.access_time,
+              label: 'Last Advertisement',
+              value: _formatTimeSince(_device.lastSeen),
+            ),
+            if (_device.isEncrypted) ...[
+              const SizedBox(height: 8),
+              _InfoRow(
+                icon: Icons.lock,
+                label: 'Encryption',
+                value: _device.decryptionFailed ? 'Invalid Key' : 'Enabled',
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _formatTimeSince(DateTime lastSeen) {
+    final diff = DateTime.now().difference(lastSeen);
+    if (diff.inSeconds < 5) {
+      return 'Just now';
+    } else if (diff.inSeconds < 60) {
+      return '${diff.inSeconds}s ago';
+    } else if (diff.inMinutes < 60) {
+      return '${diff.inMinutes}m ago';
+    } else {
+      return '${diff.inHours}h ago';
+    }
+  }
+}
+
+class _InfoRow extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+
+  const _InfoRow({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Row(
+      children: [
+        Icon(
+          icon,
+          size: 18,
+          color: theme.colorScheme.outline,
+        ),
+        const SizedBox(width: 8),
+        Text(
+          label,
+          style: theme.textTheme.bodyMedium?.copyWith(
+            color: theme.colorScheme.outline,
+          ),
+        ),
+        const Spacer(),
+        Text(
+          value,
+          style: theme.textTheme.bodyMedium?.copyWith(
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _MeasurementTile extends StatelessWidget {
+  final BthomeMeasurement measurement;
+
+  const _MeasurementTile({required this.measurement});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Card(
+      elevation: 0,
+      color: theme.colorScheme.surfaceContainerLow,
+      margin: const EdgeInsets.only(bottom: 8),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.primaryContainer,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(
+                _getIconForType(measurement.type),
+                size: 24,
+                color: theme.colorScheme.onPrimaryContainer,
+              ),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    measurement.type.name,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: theme.colorScheme.outline,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    measurement.displayValue,
+                    style: theme.textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 
