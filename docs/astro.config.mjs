@@ -39,6 +39,10 @@ export default defineConfig({
           autogenerate: { directory: 'configuration' },
         },
         {
+          label: 'Components',
+          autogenerate: { directory: 'components' },
+        },
+        {
           label: 'Platforms',
           autogenerate: { directory: 'platforms' },
         },

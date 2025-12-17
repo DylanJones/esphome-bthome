@@ -8,11 +8,24 @@
 
 // Platform-specific includes
 #ifdef USE_ESP32
-#include <esp_bt_device.h>
-#include <esp_bt_main.h>
-#include <esp_gap_ble_api.h>
-#include "esphome/core/hal.h"
-#include "mbedtls/ccm.h"
+  #ifdef USE_BTHOME_NIMBLE
+    #include "esp_nimble_hci.h"
+    #include "nimble/nimble_port.h"
+    #include "nimble/nimble_port_freertos.h"
+    #include "host/ble_hs.h"
+    #include "host/util/util.h"
+    #include <esp_bt.h>
+    #include <nvs_flash.h>
+    // NimBLE uses tinycrypt for encryption
+    #include "tinycrypt/ccm_mode.h"
+    #include "tinycrypt/constants.h"
+  #else
+    #include <esp_bt_device.h>
+    #include <esp_bt_main.h>
+    #include <esp_gap_ble_api.h>
+    #include "esphome/core/hal.h"
+    #include "mbedtls/ccm.h"
+  #endif
 #endif
 
 #ifdef USE_NRF52
@@ -26,13 +39,25 @@ namespace bthome {
 
 static const char *const TAG = "bthome";
 
+#if defined(USE_ESP32) && defined(USE_BTHOME_NIMBLE)
+// Static instance for NimBLE callbacks
+BTHome *BTHome::instance_ = nullptr;
+#endif
+
 void BTHome::dump_config() {
   ESP_LOGCONFIG(TAG,
                 "BTHome:\n"
                 "  Min Interval: %ums\n"
                 "  Max Interval: %ums\n"
                 "  TX Power: %ddBm\n"
-                "  Encryption: %s",
+                "  Encryption: %s\n"
+#if defined(USE_ESP32) && defined(USE_BTHOME_NIMBLE)
+                "  BLE Stack: NimBLE",
+#elif defined(USE_ESP32)
+                "  BLE Stack: Bluedroid",
+#else
+                "  BLE Stack: Zephyr",
+#endif
                 this->min_interval_, this->max_interval_,
 #ifdef USE_ESP32
                 (this->tx_power_esp32_ * 3) - 12,
@@ -69,7 +94,43 @@ void BTHome::setup() {
   ESP_LOGD(TAG, "Setting up BTHome...");
 
 #ifdef USE_ESP32
-  // ESP32: Set up BLE advertising parameters
+  #ifdef USE_BTHOME_NIMBLE
+  // NimBLE stack initialization
+  instance_ = this;
+
+  // Initialize NVS (required by NimBLE)
+  esp_err_t ret = nvs_flash_init();
+  if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+    ESP_ERROR_CHECK(nvs_flash_erase());
+    ret = nvs_flash_init();
+  }
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "NVS flash init failed: %s", esp_err_to_name(ret));
+    this->mark_failed();
+    return;
+  }
+
+  // Initialize NimBLE
+  ret = nimble_port_init();
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "NimBLE port init failed: %s", esp_err_to_name(ret));
+    this->mark_failed();
+    return;
+  }
+
+  // Configure NimBLE host callbacks
+  // Note: No GAP service needed for broadcast-only mode
+  ble_hs_cfg.sync_cb = nimble_on_sync_;
+  ble_hs_cfg.reset_cb = nimble_on_reset_;
+
+  // Start NimBLE host task
+  nimble_port_freertos_init(nimble_host_task_);
+
+  ESP_LOGD(TAG, "NimBLE initialized, waiting for sync...");
+  this->nimble_initialized_ = true;
+
+  #else
+  // Bluedroid stack initialization
   this->ble_adv_params_ = {
       .adv_int_min = static_cast<uint16_t>(this->min_interval_ / 0.625f),
       .adv_int_max = static_cast<uint16_t>(this->max_interval_ / 0.625f),
@@ -89,6 +150,7 @@ void BTHome::setup() {
       this->start_advertising_();
     }
   });
+  #endif
 #endif
 
 #ifdef USE_NRF52
@@ -375,6 +437,48 @@ void BTHome::build_scan_response_data_() {
 
 void BTHome::start_advertising_() {
 #ifdef USE_ESP32
+  #ifdef USE_BTHOME_NIMBLE
+  // NimBLE advertising
+  if (!this->nimble_initialized_) {
+    ESP_LOGW(TAG, "NimBLE not initialized yet");
+    return;
+  }
+
+  // Set TX power at controller level
+  ESP_LOGD(TAG, "Setting BLE TX power");
+  esp_err_t err = esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_ADV, this->tx_power_esp32_);
+  if (err != ESP_OK) {
+    ESP_LOGW(TAG, "esp_ble_tx_power_set failed: %s", esp_err_to_name(err));
+  }
+
+  // Set raw advertisement data directly
+  int rc = ble_gap_adv_set_data(this->adv_data_, this->adv_data_len_);
+  if (rc != 0) {
+    ESP_LOGE(TAG, "ble_gap_adv_set_data failed: %d", rc);
+    return;
+  }
+
+  // Configure non-connectable advertising parameters
+  struct ble_gap_adv_params adv_params;
+  memset(&adv_params, 0, sizeof(adv_params));
+  adv_params.conn_mode = BLE_GAP_CONN_MODE_NON;  // Non-connectable
+  adv_params.disc_mode = BLE_GAP_DISC_MODE_GEN;  // General discoverable
+  adv_params.itvl_min = static_cast<uint16_t>(this->min_interval_ / 0.625f);
+  adv_params.itvl_max = static_cast<uint16_t>(this->max_interval_ / 0.625f);
+
+  ESP_LOGD(TAG, "Starting NimBLE advertising (%d bytes)", this->adv_data_len_);
+  rc = ble_gap_adv_start(this->nimble_own_addr_type_, nullptr, BLE_HS_FOREVER,
+                         &adv_params, nullptr, nullptr);
+  if (rc != 0) {
+    ESP_LOGE(TAG, "ble_gap_adv_start failed: %d", rc);
+    return;
+  }
+
+  this->advertising_ = true;
+  ESP_LOGD(TAG, "NimBLE advertising started");
+
+  #else
+  // Bluedroid advertising
   // Reset synchronization flags
   this->adv_data_set_ = false;
   this->scan_rsp_data_set_ = false;
@@ -398,6 +502,7 @@ void BTHome::start_advertising_() {
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "esp_ble_gap_start_advertising failed: %s", esp_err_to_name(err));
   }
+  #endif
 #endif
 
 #ifdef USE_NRF52
@@ -445,9 +550,16 @@ void BTHome::start_advertising_() {
 
 void BTHome::stop_advertising_() {
 #ifdef USE_ESP32
+  #ifdef USE_BTHOME_NIMBLE
+  if (this->advertising_) {
+    ble_gap_adv_stop();
+    this->advertising_ = false;
+  }
+  #else
   if (this->advertising_) {
     esp_ble_gap_stop_advertising();
   }
+  #endif
 #endif
 
 #ifdef USE_NRF52
@@ -458,7 +570,37 @@ void BTHome::stop_advertising_() {
 #endif
 }
 
-#ifdef USE_ESP32
+#if defined(USE_ESP32) && defined(USE_BTHOME_NIMBLE)
+// NimBLE static callbacks
+void BTHome::nimble_host_task_(void *param) {
+  ESP_LOGD(TAG, "NimBLE host task started");
+  nimble_port_run();
+  nimble_port_freertos_deinit();
+}
+
+void BTHome::nimble_on_sync_() {
+  ESP_LOGD(TAG, "NimBLE host synced");
+
+  // Determine address type
+  int rc = ble_hs_id_infer_auto(0, &instance_->nimble_own_addr_type_);
+  if (rc != 0) {
+    ESP_LOGE(TAG, "Failed to infer address type: %d", rc);
+    return;
+  }
+
+  // Build and start advertising
+  instance_->build_advertisement_data_();
+  instance_->build_scan_response_data_();
+  instance_->start_advertising_();
+}
+
+void BTHome::nimble_on_reset_(int reason) {
+  ESP_LOGW(TAG, "NimBLE host reset, reason: %d", reason);
+  instance_->advertising_ = false;
+}
+#endif
+
+#if defined(USE_ESP32) && defined(USE_BTHOME_BLUEDROID)
 void BTHome::gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param) {
   // GAP events are handled by ESPHome's BLE component
   // We start advertising directly in start_advertising_()
@@ -606,8 +748,20 @@ bool BTHome::encrypt_payload_(const uint8_t *plaintext, size_t plaintext_len, ui
   uint8_t nonce[13];
 
 #ifdef USE_ESP32
+  #ifdef USE_BTHOME_NIMBLE
+  // NimBLE: Get MAC address from controller
+  uint8_t mac[6];
+  int rc = ble_hs_id_copy_addr(this->nimble_own_addr_type_, mac, nullptr);
+  if (rc != 0) {
+    ESP_LOGE(TAG, "Failed to get NimBLE MAC address: %d", rc);
+    return false;
+  }
+  memcpy(nonce, mac, 6);
+  #else
+  // Bluedroid: Get MAC address
   const uint8_t *mac = esp_bt_dev_get_address();
   memcpy(nonce, mac, 6);
+  #endif
 #endif
 
 #ifdef USE_NRF52
@@ -626,6 +780,28 @@ bool BTHome::encrypt_payload_(const uint8_t *plaintext, size_t plaintext_len, ui
   nonce[12] = (this->counter_ >> 24) & 0xFF;
 
 #ifdef USE_ESP32
+  #ifdef USE_BTHOME_NIMBLE
+  // NimBLE: Use tinycrypt for encryption (smaller footprint)
+  struct tc_ccm_mode_struct ctx;
+  struct tc_aes_key_sched_struct sched;
+
+  if (tc_aes128_set_encrypt_key(&sched, this->encryption_key_.data()) != TC_CRYPTO_SUCCESS) {
+    ESP_LOGE(TAG, "Failed to set AES key");
+    return false;
+  }
+
+  if (tc_ccm_config(&ctx, &sched, nonce, sizeof(nonce), 4) != TC_CRYPTO_SUCCESS) {
+    ESP_LOGE(TAG, "Failed to configure CCM");
+    return false;
+  }
+
+  if (tc_ccm_generation_encryption(ciphertext, plaintext_len + 4, nullptr, 0,
+                                    plaintext, plaintext_len, &ctx) != TC_CRYPTO_SUCCESS) {
+    ESP_LOGE(TAG, "CCM encryption failed");
+    return false;
+  }
+  #else
+  // Bluedroid: Use mbedtls for encryption
   mbedtls_ccm_context ctx;
   mbedtls_ccm_init(&ctx);
 
@@ -644,6 +820,7 @@ bool BTHome::encrypt_payload_(const uint8_t *plaintext, size_t plaintext_len, ui
     ESP_LOGE(TAG, "mbedtls_ccm_encrypt_and_tag failed: %d", ret);
     return false;
   }
+  #endif
 #endif
 
 #ifdef USE_NRF52

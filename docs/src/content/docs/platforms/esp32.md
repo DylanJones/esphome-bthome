@@ -56,6 +56,20 @@ esp32:
 Arduino framework is not supported. You must use ESP-IDF.
 :::
 
+## BLE Stack Options
+
+ESP32 supports two BLE stacks:
+
+- **Bluedroid** (default) - Full-featured BLE stack, compatible with other ESPHome BLE components
+- **NimBLE** - Lightweight alternative that saves ~170KB flash and ~100KB RAM
+
+For broadcast-only sensors, NimBLE offers significant memory savings. See the [BTHome Component](/components/bthome) documentation for detailed comparison and configuration.
+
+```yaml
+bthome:
+  ble_stack: nimble  # Optional: use lightweight NimBLE stack
+```
+
 ## TX Power Levels
 
 ESP32 supports these transmit power levels:

@@ -12,6 +12,7 @@ bthome:
   min_interval: 1s
   max_interval: 1s
   tx_power: 0
+  ble_stack: bluedroid  # Optional, ESP32 only: bluedroid or nimble
   trigger_based: false  # Optional, for event-driven devices
   encryption_key: "your_32_hex_char_key"  # Optional
   sensors:
@@ -27,6 +28,7 @@ bthome:
 | `min_interval` | Time | `1s` | Minimum advertising interval (1s - 10240ms) |
 | `max_interval` | Time | `1s` | Maximum advertising interval (1s - 10240ms) |
 | `tx_power` | Integer | `0` | Transmit power in dBm |
+| `ble_stack` | String | `bluedroid` | ESP32 only: `bluedroid` or `nimble` (see [BTHome Component](/components/bthome)) |
 | `trigger_based` | Boolean | `false` | Mark device as trigger-based (event-driven) |
 | `encryption_key` | String | - | Optional 16-byte encryption key (32 hex chars) |
 | `sensors` | List | - | List of sensor measurements to broadcast |

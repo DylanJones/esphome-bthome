@@ -31,6 +31,11 @@ DEPENDENCIES = []
 # Auto-load these components when bthome is used
 AUTO_LOAD = []
 
+# BLE stack options for ESP32
+CONF_BLE_STACK = "ble_stack"
+BLE_STACK_BLUEDROID = "bluedroid"
+BLE_STACK_NIMBLE = "nimble"
+
 bthome_ns = cg.esphome_ns.namespace("bthome")
 BTHome = bthome_ns.class_("BTHome", cg.Component)
 
@@ -209,6 +214,9 @@ CONFIG_SCHEMA = cv.All(
         {
             cv.GenerateID(): cv.declare_id(BTHome),
             cv.Optional(CONF_TRIGGER_BASED, default=False): cv.boolean,
+            cv.Optional(CONF_BLE_STACK, default=BLE_STACK_BLUEDROID): cv.one_of(
+                BLE_STACK_BLUEDROID, BLE_STACK_NIMBLE, lower=True
+            ),
             cv.Optional(CONF_MIN_INTERVAL, default="1s"): cv.All(
                 cv.positive_time_period_milliseconds,
                 cv.Range(min=TimePeriod(milliseconds=1000), max=TimePeriod(milliseconds=10240)),
@@ -300,13 +308,33 @@ async def to_code(config):
 
     # Platform-specific setup
     if CORE.is_esp32:
-        from esphome.components import esp32_ble
         from esphome.components.esp32 import add_idf_sdkconfig_option
 
-        cg.add_define("USE_ESP32_BLE_UUID")
-        cg.add_define("USE_ESP32_BLE_ADVERTISING")
-        add_idf_sdkconfig_option("CONFIG_BT_ENABLED", True)
-        add_idf_sdkconfig_option("CONFIG_BT_BLE_42_FEATURES_SUPPORTED", True)
+        ble_stack = config.get(CONF_BLE_STACK, BLE_STACK_BLUEDROID)
+
+        if ble_stack == BLE_STACK_NIMBLE:
+            # NimBLE stack - lighter weight (~170KB flash, ~100KB RAM savings)
+            cg.add_define("USE_BTHOME_NIMBLE")
+            add_idf_sdkconfig_option("CONFIG_BT_ENABLED", True)
+            add_idf_sdkconfig_option("CONFIG_BT_NIMBLE_ENABLED", True)
+            add_idf_sdkconfig_option("CONFIG_BT_CONTROLLER_ENABLED", True)
+            # Disable Bluedroid
+            add_idf_sdkconfig_option("CONFIG_BT_BLUEDROID_ENABLED", False)
+            # NimBLE roles - only broadcaster needed for BTHome
+            add_idf_sdkconfig_option("CONFIG_BT_NIMBLE_ROLE_CENTRAL", False)
+            add_idf_sdkconfig_option("CONFIG_BT_NIMBLE_ROLE_OBSERVER", False)
+            add_idf_sdkconfig_option("CONFIG_BT_NIMBLE_ROLE_PERIPHERAL", False)
+            add_idf_sdkconfig_option("CONFIG_BT_NIMBLE_ROLE_BROADCASTER", True)
+            # Use tinycrypt for smaller footprint (saves ~7KB)
+            add_idf_sdkconfig_option("CONFIG_BT_NIMBLE_CRYPTO_STACK_MBEDTLS", False)
+        else:
+            # Bluedroid stack (default)
+            cg.add_define("USE_BTHOME_BLUEDROID")
+            cg.add_define("USE_ESP32_BLE_UUID")
+            cg.add_define("USE_ESP32_BLE_ADVERTISING")
+            add_idf_sdkconfig_option("CONFIG_BT_ENABLED", True)
+            add_idf_sdkconfig_option("CONFIG_BT_BLUEDROID_ENABLED", True)
+            add_idf_sdkconfig_option("CONFIG_BT_BLE_42_FEATURES_SUPPORTED", True)
 
     elif CORE.is_nrf52:
         from esphome.components.zephyr import zephyr_add_prj_conf

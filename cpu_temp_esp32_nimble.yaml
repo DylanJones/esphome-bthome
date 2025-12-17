@@ -1,0 +1,58 @@
+# BTHome ESP32 CPU Temperature Broadcaster (NimBLE Stack)
+# Uses lightweight NimBLE stack (~170KB flash, ~100KB RAM savings)
+# Compatible with Home Assistant's BTHome integration
+
+esphome:
+  name: bthome-cpu-temp-nimble
+  friendly_name: BTHome CPU Temp (NimBLE)
+
+esp32:
+  board: seeed_xiao_esp32s3
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_80: y
+
+logger:
+
+wifi:
+  enable_on_boot: false
+  ap: {}
+  power_save_mode: HIGH
+
+external_components:
+- source:
+    type: local
+    path: components
+  components: [ bthome ]
+
+# NOTE: No esp32_ble component - NimBLE is standalone
+
+# Deep sleep: awake 30s, sleep 5 minutes
+deep_sleep:
+  run_duration: 30s
+  sleep_duration: 5min
+
+# Internal CPU temperature sensor
+sensor:
+- platform: internal_temperature
+  name: "CPU Temperature"
+  id: cpu_temp
+  update_interval: 10s
+
+# BTHome configuration with NimBLE stack
+bthome:
+  # Use NimBLE stack (lighter weight)
+  ble_stack: nimble
+
+  # Advertising interval (multiple broadcasts during 1min awake window)
+  min_interval: 5s
+  max_interval: 10s
+
+  # TX power: -12, -9, -6, -3, 0, 3, 6, 9 dBm
+  tx_power: 0
+
+  # Sensor measurements to broadcast
+  sensors:
+  - type: temperature
+    id: cpu_temp

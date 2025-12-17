@@ -14,11 +14,22 @@
 
 // Platform-specific includes
 #ifdef USE_ESP32
-#include "esphome/components/esp32_ble/ble.h"
-#ifndef CONFIG_ESP_HOSTED_ENABLE_BT_BLUEDROID
-#include <esp_bt.h>
-#endif
-#include <esp_gap_ble_api.h>
+  #ifdef USE_BTHOME_NIMBLE
+    // NimBLE stack (lighter weight, broadcast-only)
+    #include "esp_nimble_hci.h"
+    #include "nimble/nimble_port.h"
+    #include "nimble/nimble_port_freertos.h"
+    #include "host/ble_hs.h"
+    #include "host/util/util.h"
+    #include <esp_bt.h>
+  #else
+    // Bluedroid stack (default)
+    #include "esphome/components/esp32_ble/ble.h"
+    #ifndef CONFIG_ESP_HOSTED_ENABLE_BT_BLUEDROID
+      #include <esp_bt.h>
+    #endif
+    #include <esp_gap_ble_api.h>
+  #endif
 #endif  // USE_ESP32
 
 #ifdef USE_NRF52
@@ -60,7 +71,7 @@ struct BinarySensorMeasurement {
 };
 #endif
 
-#ifdef USE_ESP32
+#if defined(USE_ESP32) && defined(USE_BTHOME_BLUEDROID)
 using namespace esp32_ble;
 
 class BTHome : public Component, public GAPEventHandler, public Parented<ESP32BLE> {
@@ -96,7 +107,7 @@ class BTHome : public Component {
   void add_binary_measurement(binary_sensor::BinarySensor *sensor, uint8_t object_id, bool advertise_immediately);
 #endif
 
-#ifdef USE_ESP32
+#if defined(USE_ESP32) && defined(USE_BTHOME_BLUEDROID)
   void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param) override;
 #endif
 
@@ -155,9 +166,21 @@ class BTHome : public Component {
   // Platform-specific members
 #ifdef USE_ESP32
   esp_power_level_t tx_power_esp32_{};
-  esp_ble_adv_params_t ble_adv_params_;
-  bool adv_data_set_{false};
-  bool scan_rsp_data_set_{false};
+
+  #ifdef USE_BTHOME_NIMBLE
+    // NimBLE-specific members
+    uint8_t nimble_own_addr_type_{0};
+    bool nimble_initialized_{false};
+    static BTHome *instance_;  // For NimBLE callbacks
+    static void nimble_host_task_(void *param);
+    static void nimble_on_sync_();
+    static void nimble_on_reset_(int reason);
+  #else
+    // Bluedroid-specific members
+    esp_ble_adv_params_t ble_adv_params_;
+    bool adv_data_set_{false};
+    bool scan_rsp_data_set_{false};
+  #endif
 #endif
 
 #ifdef USE_NRF52

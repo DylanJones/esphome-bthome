@@ -18,7 +18,9 @@
       "Bash(flutter analyze:*)",
       "WebFetch(domain:bthome.io)",
       "WebFetch(domain:esphome.io)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "WebFetch(domain:h2zero.github.io)",
+      "Bash(git -C /Users/dz0ny/esphome-bthome status --short)"
     ]
   }
 }
