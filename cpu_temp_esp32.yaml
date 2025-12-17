@@ -41,9 +41,6 @@ sensor:
 
 # BTHome configuration
 bthome:
-  # Device name defaults to esphome name ("bthome-cpu-temp")
-  # Override with: device_name: "Custom Name"
-
   # Advertising interval
   min_interval: 5s
   max_interval: 10s

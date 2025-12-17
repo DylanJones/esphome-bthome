@@ -12,6 +12,7 @@ bthome:
   min_interval: 1s
   max_interval: 1s
   tx_power: 0
+  trigger_based: false  # Optional, for event-driven devices
   encryption_key: "your_32_hex_char_key"  # Optional
   sensors:
     # ... sensor configuration
@@ -26,6 +27,7 @@ bthome:
 | `min_interval` | Time | `1s` | Minimum advertising interval (1s - 10240ms) |
 | `max_interval` | Time | `1s` | Maximum advertising interval (1s - 10240ms) |
 | `tx_power` | Integer | `0` | Transmit power in dBm |
+| `trigger_based` | Boolean | `false` | Mark device as trigger-based (event-driven) |
 | `encryption_key` | String | - | Optional 16-byte encryption key (32 hex chars) |
 | `sensors` | List | - | List of sensor measurements to broadcast |
 | `binary_sensors` | List | - | List of binary sensor measurements to broadcast |
@@ -80,6 +82,29 @@ Example:
 bthome:
   tx_power: 4  # Increase range
 ```
+
+## Trigger-Based Devices
+
+Set `trigger_based: true` for devices that only send data on events rather than continuously. This tells Home Assistant not to expect regular updates from the device.
+
+Use cases for trigger-based mode:
+- **Push buttons** - Only broadcast when pressed
+- **Remote controls** - Only broadcast on button press
+- **Door bells** - Only broadcast when activated
+- **Event-driven sensors** - Any sensor that reports discrete events rather than continuous measurements
+
+```yaml
+bthome:
+  trigger_based: true
+  binary_sensors:
+    - type: generic_boolean
+      id: button_press
+      advertise_immediately: true
+```
+
+:::tip[When to use trigger_based]
+Enable this for battery-powered devices where you want to maximize battery life by only transmitting on user interaction or events, not on a regular schedule.
+:::
 
 ## Sensor Configuration
 

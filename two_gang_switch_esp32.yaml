@@ -133,12 +133,6 @@ interval:
 
 
 bthome:
-  # Device name defaults to esphome name ("bthome-2gang-esp32")
-  # Override with: device_name: "Custom Name"
-
-  # Optional: Manufacturer ID (16-bit, shown in BLE scan response)
-  # manufacturer_id: 0x1234
-
   # Trigger-based device: set to true for devices that only send on events (buttons)
   # This tells receivers not to expect regular updates
   # trigger_based: true

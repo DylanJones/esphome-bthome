@@ -39,8 +39,6 @@ CONF_ENCRYPTION_KEY = "encryption_key"
 CONF_MIN_INTERVAL = "min_interval"
 CONF_MAX_INTERVAL = "max_interval"
 CONF_ADVERTISE_IMMEDIATELY = "advertise_immediately"
-CONF_DEVICE_NAME = "device_name"
-CONF_MANUFACTURER_ID = "manufacturer_id"
 CONF_TRIGGER_BASED = "trigger_based"
 
 # =============================================================================
@@ -200,36 +198,6 @@ def validate_encryption_key(value):
     return value.lower()
 
 
-def validate_device_name(value):
-    """Validate device name (max 20 characters for BLE)."""
-    value = cv.string_strict(value)
-    if len(value) > 20:
-        raise cv.Invalid("Device name must be 20 characters or less")
-    if len(value) == 0:
-        raise cv.Invalid("Device name cannot be empty")
-    return value
-
-
-def validate_manufacturer_id(value):
-    """Validate manufacturer ID (16-bit value or hex string)."""
-    if isinstance(value, str):
-        value = value.strip()
-        if value.startswith("0x") or value.startswith("0X"):
-            try:
-                value = int(value, 16)
-            except ValueError as e:
-                raise cv.Invalid("Invalid hex manufacturer ID") from e
-        else:
-            try:
-                value = int(value)
-            except ValueError as e:
-                raise cv.Invalid("Invalid manufacturer ID") from e
-    value = int(value)
-    if value < 0 or value > 0xFFFF:
-        raise cv.Invalid("Manufacturer ID must be a 16-bit value (0-65535 or 0x0000-0xFFFF)")
-    return value
-
-
 def _final_validate(config):
     if not CORE.is_esp32 and not CORE.is_nrf52:
         raise cv.Invalid("BTHome only supports ESP32 and nRF52 platforms")
@@ -240,8 +208,6 @@ CONFIG_SCHEMA = cv.All(
     cv.Schema(
         {
             cv.GenerateID(): cv.declare_id(BTHome),
-            cv.Optional(CONF_DEVICE_NAME): validate_device_name,
-            cv.Optional(CONF_MANUFACTURER_ID): validate_manufacturer_id,
             cv.Optional(CONF_TRIGGER_BASED, default=False): cv.boolean,
             cv.Optional(CONF_MIN_INTERVAL, default="1s"): cv.All(
                 cv.positive_time_period_milliseconds,
@@ -297,14 +263,9 @@ async def to_code(config):
     cg.add(var.set_max_interval(config[CONF_MAX_INTERVAL]))
     cg.add(var.set_tx_power(config[CONF_TX_POWER]))
 
-    # Use custom device_name if provided, otherwise use esphome name
-    device_name = config.get(CONF_DEVICE_NAME, CORE.name)
-    if device_name:
-        # Truncate to 20 chars for BLE
-        cg.add(var.set_device_name(device_name[:20]))
-
-    if CONF_MANUFACTURER_ID in config:
-        cg.add(var.set_manufacturer_id(config[CONF_MANUFACTURER_ID]))
+    # Always use ESPHome device name
+    if CORE.name:
+        cg.add(var.set_device_name(CORE.name[:20]))
 
     if config[CONF_TRIGGER_BASED]:
         cg.add(var.set_trigger_based(True))
