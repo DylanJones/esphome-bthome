@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:pointycastle/export.dart';
 
@@ -158,6 +159,11 @@ class BthomeDevice {
   final List<BthomeMeasurement> measurements;
   final Uint8List? rawServiceData;
   final DateTime lastSeen;
+  // Scan response data
+  final int? txPowerLevel;
+  final int? appearance;
+  final int? manufacturerId;
+  final String? esphomeVersion;
 
   BthomeDevice({
     required this.macAddress,
@@ -169,7 +175,51 @@ class BthomeDevice {
     this.measurements = const [],
     this.rawServiceData,
     DateTime? lastSeen,
+    this.txPowerLevel,
+    this.appearance,
+    this.manufacturerId,
+    this.esphomeVersion,
   }) : lastSeen = lastSeen ?? DateTime.now();
+
+  /// Get appearance name from code
+  String? get appearanceName {
+    if (appearance == null) return null;
+    switch (appearance) {
+      case 0x0540: return 'Sensor';
+      case 0x0541: return 'Motion Sensor';
+      case 0x0542: return 'Contact Sensor';
+      case 0x0300: return 'Thermometer';
+      default: return 'Device (0x${appearance!.toRadixString(16)})';
+    }
+  }
+
+  /// Calculate estimated distance in meters from RSSI and TX power
+  /// Uses log-distance path loss model: d = 10 ^ ((txPower - rssi) / (10 * n))
+  /// where n is path loss exponent (2.0 for free space, 2.5-4.0 for indoors)
+  double? get estimatedDistance {
+    if (txPowerLevel == null) return null;
+    const pathLossExponent = 2.5; // Indoor environment
+    final distance =
+        _pow(10, (txPowerLevel! - rssi) / (10 * pathLossExponent));
+    return distance;
+  }
+
+  /// Get distance as formatted string
+  String? get distanceString {
+    final dist = estimatedDistance;
+    if (dist == null) return null;
+    if (dist < 1) {
+      return '${(dist * 100).toStringAsFixed(0)} cm';
+    } else if (dist < 10) {
+      return '${dist.toStringAsFixed(1)} m';
+    } else {
+      return '${dist.toStringAsFixed(0)} m';
+    }
+  }
+
+  static double _pow(num base, num exponent) {
+    return math.pow(base.toDouble(), exponent.toDouble()).toDouble();
+  }
 
   /// Create a generic (non-BTHome) BLE device
   factory BthomeDevice.generic({
@@ -205,6 +255,10 @@ class BthomeDevice {
     List<BthomeMeasurement>? measurements,
     Uint8List? rawServiceData,
     DateTime? lastSeen,
+    int? txPowerLevel,
+    int? appearance,
+    int? manufacturerId,
+    String? esphomeVersion,
   }) {
     return BthomeDevice(
       macAddress: macAddress ?? this.macAddress,
@@ -216,12 +270,26 @@ class BthomeDevice {
       measurements: measurements ?? this.measurements,
       rawServiceData: rawServiceData ?? this.rawServiceData,
       lastSeen: lastSeen ?? this.lastSeen,
+      txPowerLevel: txPowerLevel ?? this.txPowerLevel,
+      appearance: appearance ?? this.appearance,
+      manufacturerId: manufacturerId ?? this.manufacturerId,
+      esphomeVersion: esphomeVersion ?? this.esphomeVersion,
     );
   }
 }
 
 /// Parser for BTHome service data with encryption support
 class BthomeParser {
+  /// Parse ESPHome version from manufacturer data (4 bytes after manufacturer ID)
+  static String? parseEsphomeVersion(Uint8List mfrData) {
+    if (mfrData.length < 4) return null;
+    // Version code is little-endian: [patch, minor, major_low, major_high]
+    final patch = mfrData[0];
+    final minor = mfrData[1];
+    final major = mfrData[2] | (mfrData[3] << 8);
+    return '$major.$minor.$patch';
+  }
+
   /// Parse BTHome service data from raw bytes
   static Future<BthomeDevice?> parse({
     required String macAddress,
@@ -229,8 +297,18 @@ class BthomeParser {
     required int rssi,
     required Uint8List serviceData,
     Uint8List? encryptionKey,
+    int? txPowerLevel,
+    int? appearance,
+    int? manufacturerId,
+    Uint8List? manufacturerData,
   }) async {
     if (serviceData.isEmpty) return null;
+
+    // Parse ESPHome version from manufacturer data
+    String? esphomeVersion;
+    if (manufacturerData != null && manufacturerData.length >= 4) {
+      esphomeVersion = parseEsphomeVersion(manufacturerData);
+    }
 
     final deviceInfo = serviceData[0];
     final isEncrypted =
@@ -245,6 +323,10 @@ class BthomeParser {
           isEncrypted: true,
           measurements: [],
           rawServiceData: serviceData,
+          txPowerLevel: txPowerLevel,
+          appearance: appearance,
+          manufacturerId: manufacturerId,
+          esphomeVersion: esphomeVersion,
         );
       }
 
@@ -265,6 +347,10 @@ class BthomeParser {
           decryptionFailed: true,
           measurements: [],
           rawServiceData: serviceData,
+          txPowerLevel: txPowerLevel,
+          appearance: appearance,
+          manufacturerId: manufacturerId,
+          esphomeVersion: esphomeVersion,
         );
       }
 
@@ -276,6 +362,10 @@ class BthomeParser {
         isEncrypted: true,
         measurements: measurements,
         rawServiceData: serviceData,
+        txPowerLevel: txPowerLevel,
+        appearance: appearance,
+        manufacturerId: manufacturerId,
+        esphomeVersion: esphomeVersion,
       );
     }
 
@@ -287,6 +377,10 @@ class BthomeParser {
       isEncrypted: false,
       measurements: measurements,
       rawServiceData: serviceData,
+      txPowerLevel: txPowerLevel,
+      appearance: appearance,
+      manufacturerId: manufacturerId,
+      esphomeVersion: esphomeVersion,
     );
   }
 

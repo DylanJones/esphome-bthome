@@ -331,31 +331,63 @@ void BTHome::build_advertisement_data_() {
     }
 #endif
   } else {
-    // Normal: add all measurements that fit
+    // Normal: add measurements with rotation (for splitting across packets)
 #ifdef USE_SENSOR
-    for (const auto &measurement : this->measurements_) {
-      if (!measurement.sensor->has_state() || std::isnan(measurement.sensor->state))
-        continue;
+    if (!this->measurements_.empty()) {
+      size_t start_idx = this->current_sensor_index_;
+      size_t count = this->measurements_.size();
+      size_t added = 0;
 
-      // Check if measurement fits: object_id (1 byte) + data_bytes
-      size_t encoded_size = 1 + measurement.data_bytes;
-      if (pos + encoded_size > MAX_BLE_ADVERTISEMENT_SIZE)
-        break;
+      // Rotate through measurements starting from current index
+      for (size_t i = 0; i < count; i++) {
+        size_t idx = (start_idx + i) % count;
+        const auto &measurement = this->measurements_[idx];
 
-      pos += this->encode_measurement_(this->adv_data_ + pos, MAX_BLE_ADVERTISEMENT_SIZE - pos, measurement);
+        if (!measurement.sensor->has_state() || std::isnan(measurement.sensor->state))
+          continue;
+
+        // Check if measurement fits: object_id (1 byte) + data_bytes
+        size_t encoded_size = 1 + measurement.data_bytes;
+        if (pos + encoded_size > MAX_BLE_ADVERTISEMENT_SIZE)
+          break;
+
+        pos += this->encode_measurement_(this->adv_data_ + pos, MAX_BLE_ADVERTISEMENT_SIZE - pos, measurement);
+        added++;
+      }
+
+      // Advance index for next advertisement (rotate through all sensors)
+      if (added > 0 && added < count) {
+        this->current_sensor_index_ = (start_idx + added) % count;
+      }
     }
 #endif
 
 #ifdef USE_BINARY_SENSOR
-    for (const auto &measurement : this->binary_measurements_) {
-      if (!measurement.sensor->has_state())
-        continue;
+    if (!this->binary_measurements_.empty()) {
+      size_t start_idx = this->current_binary_index_;
+      size_t count = this->binary_measurements_.size();
+      size_t added = 0;
 
-      if (pos + 2 > MAX_BLE_ADVERTISEMENT_SIZE)
-        break;
+      // Rotate through binary measurements starting from current index
+      for (size_t i = 0; i < count; i++) {
+        size_t idx = (start_idx + i) % count;
+        const auto &measurement = this->binary_measurements_[idx];
 
-      pos += this->encode_binary_measurement_(this->adv_data_ + pos, MAX_BLE_ADVERTISEMENT_SIZE - pos,
-                                               measurement.object_id, measurement.sensor->state);
+        if (!measurement.sensor->has_state())
+          continue;
+
+        if (pos + 2 > MAX_BLE_ADVERTISEMENT_SIZE)
+          break;
+
+        pos += this->encode_binary_measurement_(this->adv_data_ + pos, MAX_BLE_ADVERTISEMENT_SIZE - pos,
+                                                 measurement.object_id, measurement.sensor->state);
+        added++;
+      }
+
+      // Advance index for next advertisement
+      if (added > 0 && added < count) {
+        this->current_binary_index_ = (start_idx + added) % count;
+      }
     }
 #endif
   }
@@ -391,61 +423,38 @@ void BTHome::build_advertisement_data_() {
 
   this->adv_data_len_ = pos;
 
-  ESP_LOGD(TAG, "Built advertisement data (%d bytes)", this->adv_data_len_);
-  if (this->adv_data_len_ > 0) {
-    char hex_str[MAX_BLE_ADVERTISEMENT_SIZE * 3 + 1];
-    for (size_t i = 0; i < this->adv_data_len_; i++) {
-      snprintf(hex_str + i * 3, 4, "%02X ", this->adv_data_[i]);
-    }
-    hex_str[this->adv_data_len_ * 3 - 1] = '\0';  // Remove trailing space
-    ESP_LOGD(TAG, "  ADV: %s", hex_str);
+  ESP_LOGD(TAG, "Built advertisement data (%zu bytes)", this->adv_data_len_);
+#ifdef USE_SENSOR
+  if (this->measurements_.size() > 1) {
+    ESP_LOGD(TAG, "  Sensor rotation index: %zu/%zu", this->current_sensor_index_, this->measurements_.size());
   }
+#endif
 }
 
 void BTHome::build_scan_response_data_() {
+  // Scan response is limited to 31 bytes
+  // We include: TX Power (3), Manufacturer Data (8), Name (remaining ~20)
   size_t pos = 0;
 
-  // Add Complete List of 16-bit Service UUIDs (BTHome UUID 0xFCD2)
-  this->scan_rsp_data_[pos++] = 3;     // Length (type + 2 bytes UUID)
-  this->scan_rsp_data_[pos++] = 0x03;  // Type: Complete List of 16-bit Service UUIDs
-  this->scan_rsp_data_[pos++] = BTHOME_SERVICE_UUID & 0xFF;         // UUID low byte
-  this->scan_rsp_data_[pos++] = (BTHOME_SERVICE_UUID >> 8) & 0xFF;  // UUID high byte
-
-  // Add TX Power Level (for distance estimation)
-#ifdef USE_ESP32
-  // Convert esp_power_level_t to dBm: 0=-12, 1=-9, 2=-6, 3=-3, 4=0, 5=3, 6=6, 7=9
-  static const int8_t esp32_tx_power_dbm[] = {-12, -9, -6, -3, 0, 3, 6, 9};
-  int8_t tx_dbm = esp32_tx_power_dbm[this->tx_power_esp32_ & 0x07];
-#else
-  int8_t tx_dbm = this->tx_power_nrf52_;
-#endif
-  this->scan_rsp_data_[pos++] = 2;     // Length (type + 1 byte power)
+  // Add TX Power Level (3 bytes) for distance estimation
+  this->scan_rsp_data_[pos++] = 2;     // Length
   this->scan_rsp_data_[pos++] = 0x0A;  // Type: TX Power Level
-  this->scan_rsp_data_[pos++] = static_cast<uint8_t>(tx_dbm);
+#ifdef USE_ESP32
+  // Convert ESP32 power level enum to dBm: level * 3 - 12
+  int8_t tx_power_dbm = static_cast<int8_t>(this->tx_power_esp32_) * 3 - 12;
+#elif defined(USE_NRF52)
+  int8_t tx_power_dbm = this->tx_power_nrf52_;
+#else
+  int8_t tx_power_dbm = 0;
+#endif
+  this->scan_rsp_data_[pos++] = static_cast<uint8_t>(tx_power_dbm);
 
-  // Add Appearance (Generic Sensor = 0x0540)
-  this->scan_rsp_data_[pos++] = 3;     // Length (type + 2 bytes appearance)
-  this->scan_rsp_data_[pos++] = 0x19;  // Type: Appearance
-  this->scan_rsp_data_[pos++] = 0x40;  // Low byte: 0x0540 = Generic Sensor
-  this->scan_rsp_data_[pos++] = 0x05;  // High byte
-
-  // Add Complete Local Name if set
-  if (!this->device_name_.empty()) {
-    size_t name_len = this->device_name_.length();
-    this->scan_rsp_data_[pos++] = name_len + 1;  // Length (type + name)
-    this->scan_rsp_data_[pos++] = 0x09;          // Type: Complete Local Name
-    memcpy(this->scan_rsp_data_ + pos, this->device_name_.c_str(), name_len);
-    pos += name_len;
-  }
-
-  // Add Manufacturer Specific Data with ESPHome version
+  // Add Manufacturer Specific Data with ESPHome version (8 bytes)
   if (this->has_manufacturer_id_) {
-    this->scan_rsp_data_[pos++] = 7;     // Length (type + 2 bytes manufacturer ID + 4 bytes version)
+    this->scan_rsp_data_[pos++] = 7;     // Length
     this->scan_rsp_data_[pos++] = 0xFF;  // Type: Manufacturer Specific Data
-    // Manufacturer ID (little-endian)
     this->scan_rsp_data_[pos++] = this->manufacturer_id_ & 0xFF;
     this->scan_rsp_data_[pos++] = (this->manufacturer_id_ >> 8) & 0xFF;
-    // ESPHome version code (little-endian, 4 bytes: year.month.patch)
     uint32_t version = ESPHOME_VERSION_CODE;
     this->scan_rsp_data_[pos++] = version & 0xFF;
     this->scan_rsp_data_[pos++] = (version >> 8) & 0xFF;
@@ -453,17 +462,22 @@ void BTHome::build_scan_response_data_() {
     this->scan_rsp_data_[pos++] = (version >> 24) & 0xFF;
   }
 
-  this->scan_rsp_data_len_ = pos;
-
-  if (pos > 0) {
-    ESP_LOGD(TAG, "Built scan response data (%d bytes)", this->scan_rsp_data_len_);
-    char hex_str[MAX_BLE_ADVERTISEMENT_SIZE * 3 + 1];
-    for (size_t i = 0; i < this->scan_rsp_data_len_; i++) {
-      snprintf(hex_str + i * 3, 4, "%02X ", this->scan_rsp_data_[i]);
+  // Add device name, clipped to fit remaining space (31 - 11 = 20 bytes max)
+  if (!this->device_name_.empty()) {
+    size_t remaining = MAX_BLE_ADVERTISEMENT_SIZE - pos;
+    size_t max_name_len = remaining > 2 ? remaining - 2 : 0;
+    size_t name_len = std::min(this->device_name_.length(), max_name_len);
+    if (name_len > 0) {
+      this->scan_rsp_data_[pos++] = name_len + 1;
+      // Shortened Local Name (0x08) if truncated, Complete (0x09) otherwise
+      this->scan_rsp_data_[pos++] = (name_len < this->device_name_.length()) ? 0x08 : 0x09;
+      memcpy(this->scan_rsp_data_ + pos, this->device_name_.c_str(), name_len);
+      pos += name_len;
     }
-    hex_str[this->scan_rsp_data_len_ * 3 - 1] = '\0';  // Remove trailing space
-    ESP_LOGD(TAG, "  RSP: %s", hex_str);
   }
+
+  this->scan_rsp_data_len_ = pos;
+  ESP_LOGD(TAG, "Built scan response data (%zu bytes)", this->scan_rsp_data_len_);
 }
 
 void BTHome::start_advertising_() {
@@ -475,21 +489,14 @@ void BTHome::start_advertising_() {
     return;
   }
 
-  // Set TX power at controller level
-  ESP_LOGD(TAG, "Setting BLE TX power");
-  esp_err_t err = esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_ADV, this->tx_power_esp32_);
-  if (err != ESP_OK) {
-    ESP_LOGW(TAG, "esp_ble_tx_power_set failed: %s", esp_err_to_name(err));
-  }
-
-  // Set raw advertisement data directly
+  // Set raw advertisement data
   int rc = ble_gap_adv_set_data(this->adv_data_, this->adv_data_len_);
   if (rc != 0) {
     ESP_LOGE(TAG, "ble_gap_adv_set_data failed: %d", rc);
     return;
   }
 
-  // Set scan response data (contains device name)
+  // Set scan response data (device name + ESPHome version)
   if (this->scan_rsp_data_len_ > 0) {
     rc = ble_gap_adv_rsp_set_data(this->scan_rsp_data_, this->scan_rsp_data_len_);
     if (rc != 0) {
@@ -497,7 +504,7 @@ void BTHome::start_advertising_() {
     }
   }
 
-  // Configure non-connectable advertising parameters
+  // Configure non-connectable advertising
   struct ble_gap_adv_params adv_params;
   memset(&adv_params, 0, sizeof(adv_params));
   adv_params.conn_mode = BLE_GAP_CONN_MODE_NON;  // Non-connectable
@@ -505,7 +512,8 @@ void BTHome::start_advertising_() {
   adv_params.itvl_min = static_cast<uint16_t>(this->min_interval_ / 0.625f);
   adv_params.itvl_max = static_cast<uint16_t>(this->max_interval_ / 0.625f);
 
-  ESP_LOGD(TAG, "Starting NimBLE advertising (%d bytes)", this->adv_data_len_);
+  ESP_LOGD(TAG, "Starting NimBLE advertising (%zu bytes, scan_rsp %zu bytes)",
+           this->adv_data_len_, this->scan_rsp_data_len_);
   rc = ble_gap_adv_start(this->nimble_own_addr_type_, nullptr, BLE_HS_FOREVER,
                          &adv_params, nullptr, nullptr);
   if (rc != 0) {
@@ -528,7 +536,7 @@ void BTHome::start_advertising_() {
     ESP_LOGW(TAG, "esp_ble_tx_power_set failed: %s", esp_err_to_name(err));
   }
 
-  ESP_LOGD(TAG, "Setting advertisement data (%d bytes)", this->adv_data_len_);
+  ESP_LOGD(TAG, "Setting advertisement data (%zu bytes)", this->adv_data_len_);
   err = esp_ble_gap_config_adv_data_raw(this->adv_data_, this->adv_data_len_);
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "esp_ble_gap_config_adv_data_raw failed: %s", esp_err_to_name(err));
@@ -537,7 +545,7 @@ void BTHome::start_advertising_() {
 
   // Set scan response data (contains service UUID and device name)
   if (this->scan_rsp_data_len_ > 0) {
-    ESP_LOGD(TAG, "Setting scan response data (%d bytes)", this->scan_rsp_data_len_);
+    ESP_LOGD(TAG, "Setting scan response data (%zu bytes)", this->scan_rsp_data_len_);
     err = esp_ble_gap_config_scan_rsp_data_raw(this->scan_rsp_data_, this->scan_rsp_data_len_);
     if (err != ESP_OK) {
       ESP_LOGW(TAG, "esp_ble_gap_config_scan_rsp_data_raw failed: %s", esp_err_to_name(err));

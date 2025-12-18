@@ -79,6 +79,117 @@ NimBLE is available on:
 
 Other ESP32 variants (ESP32-S2, ESP32-C6) may have varying support depending on ESP-IDF version.
 
+## Measurement Rotation (Multi-Packet Support)
+
+BLE advertisements have a maximum payload of 31 bytes. For devices with many sensors (like weather stations), not all measurements may fit in a single packet. The BTHome component automatically handles this with **measurement rotation**.
+
+### How It Works
+
+When sensors don't all fit in one packet, the component:
+
+1. **Fills the packet** with as many measurements as will fit
+2. **Rotates** to the next set of measurements on the next advertisement
+3. **Cycles through** all sensors over multiple advertisements
+
+For example, with 8 sensors where only 4 fit per packet:
+- First advertisement: Sensors 0, 1, 2, 3
+- Second advertisement: Sensors 4, 5, 6, 7
+- Third advertisement: Sensors 0, 1, 2, 3 (cycle repeats)
+
+### Receiver Compatibility
+
+The BTHome mobile app and other receivers automatically merge measurements from multiple packets by sensor type. This means:
+- All sensor values are visible in the app
+- Values update as each packet arrives
+- No configuration needed on the receiver side
+
+### Weather Station Example
+
+```yaml
+esphome:
+  name: weather-station
+  friendly_name: Weather Station
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+external_components:
+  - source:
+      type: git
+      url: https://github.com/dz0ny/esphome-bthome
+      ref: main
+    components: [bthome]
+
+i2c:
+  sda: GPIO21
+  scl: GPIO22
+
+sensor:
+  # BME680 - 4 measurements
+  - platform: bme680
+    temperature:
+      id: temperature
+      name: "Temperature"
+    humidity:
+      id: humidity
+      name: "Humidity"
+    pressure:
+      id: pressure
+      name: "Pressure"
+    gas_resistance:
+      id: gas
+      name: "Gas Resistance"
+    update_interval: 60s
+
+  # Additional sensors
+  - platform: adc
+    pin: GPIO34
+    id: uv_index
+    name: "UV Index"
+
+  - platform: pulse_counter
+    pin: GPIO25
+    id: wind_speed
+    name: "Wind Speed"
+
+# BTHome broadcasts all sensors with automatic rotation
+bthome:
+  ble_stack: nimble
+  min_interval: 5s
+  max_interval: 10s
+  sensors:
+    - type: temperature
+      id: temperature
+    - type: humidity
+      id: humidity
+    - type: pressure
+      id: pressure
+    - type: tvoc
+      id: gas
+    - type: uv_index
+      id: uv_index
+    - type: speed
+      id: wind_speed
+```
+
+:::tip[Advertisement Interval]
+With measurement rotation, set shorter intervals (5-10s) so all sensors are broadcast within a reasonable time. If you have 8 sensors split across 2 packets, a 5s interval means all data is sent every 10s.
+:::
+
+### Debug Logging
+
+Enable debug logging to see rotation in action:
+
+```
+[D][bthome:426]: Built advertisement data (27 bytes)
+[D][bthome:429]:   Sensor rotation: starting from index 0/6
+[D][bthome:438]:   ADV: 02 01 06 14 16 D2 FC 40 02 E8 03 03 C2 1E 04 ...
+```
+
+The log shows which sensor index the current packet starts from and how many total sensors exist.
+
 ## Complete Configuration Example
 
 ### Basic BTHome with NimBLE
@@ -310,6 +421,36 @@ esp32:
 - Disable unnecessary features
 - Use deep sleep to reduce runtime memory usage
 - Check for other memory-intensive components
+
+### NimBLE scan response limitations
+
+**Symptom**: Device name or other scan response data not visible to receivers.
+
+**Explanation**: NimBLE uses non-connectable advertising mode optimized for broadcast-only scenarios. Scan response data (which contains device name and ESPHome version) is only transmitted when a scanner actively requests it. Some receivers may not request scan response data from non-connectable advertisers.
+
+**What's included in scan response**:
+- Device name (Complete Local Name)
+- ESPHome version (in Manufacturer Specific Data)
+
+**What's NOT included** (to keep within size limits):
+- Service UUID (already in main advertisement)
+- TX Power Level
+- Appearance
+
+**Solution**: This is a protocol limitation, not a bug. The core BTHome sensor data is always in the main advertisement packet and will be received correctly. If device identification is important, ensure your receiver supports active scanning.
+
+### NimBLE host task crashes
+
+**Symptom**: "Guru Meditation Error" with stack trace showing `nimble_on_sync_` or `ble_hs_sync`.
+
+**Solution**: Increase NimBLE host task stack size in your configuration:
+```yaml
+esp32:
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_BT_NIMBLE_HOST_TASK_STACK_SIZE: "8192"
+```
 
 ## See Also
 

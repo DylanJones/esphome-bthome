@@ -12,6 +12,8 @@ esp32:
     type: esp-idf
     sdkconfig_options:
       CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_80: y
+      # Increase NimBLE host task stack size (default is 4096)
+      CONFIG_BT_NIMBLE_HOST_TASK_STACK_SIZE: "8192"
 
 logger:
 

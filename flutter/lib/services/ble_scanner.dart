@@ -138,23 +138,6 @@ class BleScanner extends ChangeNotifier {
       final name = result.advertisementData.advName;
       final serviceData = result.advertisementData.serviceData;
 
-      // Debug: log BTHome devices only
-      if (name.toLowerCase().startsWith('bthome')) {
-        debugPrint('[BLE] $macAddress "$name" rssi=${result.rssi}');
-        if (serviceData.isNotEmpty) {
-          for (final entry in serviceData.entries) {
-            final hexData = entry.value.map((b) => b.toRadixString(16).padLeft(2, '0')).join(' ');
-            debugPrint('[BLE]   svc ${entry.key.str}: $hexData');
-          }
-        }
-        if (result.advertisementData.manufacturerData.isNotEmpty) {
-          for (final entry in result.advertisementData.manufacturerData.entries) {
-            final hexData = entry.value.map((b) => b.toRadixString(16).padLeft(2, '0')).join(' ');
-            debugPrint('[BLE]   mfr 0x${entry.key.toRadixString(16)}: $hexData');
-          }
-        }
-      }
-
       // Check if this device has BTHome service data
       // Use string comparison since Guid equality may fail
       final bthomeKey = serviceData.keys.firstWhere(
@@ -167,16 +150,60 @@ class BleScanner extends ChangeNotifier {
         final data = serviceData[bthomeKey]!;
         final normalizedMac = macAddress.toUpperCase().replaceAll(':', '').replaceAll('-', '');
 
+        // Extract scan response data
+        final txPowerLevel = result.advertisementData.txPowerLevel;
+        final appearance = result.advertisementData.appearance;
+
+        // Extract manufacturer data (first entry if exists)
+        int? manufacturerId;
+        Uint8List? manufacturerData;
+        if (result.advertisementData.manufacturerData.isNotEmpty) {
+          final entry = result.advertisementData.manufacturerData.entries.first;
+          manufacturerId = entry.key;
+          manufacturerData = Uint8List.fromList(entry.value);
+        }
+
         final device = await BthomeParser.parse(
           macAddress: macAddress,
           name: name.isNotEmpty ? name : null,
           rssi: result.rssi,
           serviceData: Uint8List.fromList(data),
           encryptionKey: _keyCache[normalizedMac],
+          txPowerLevel: txPowerLevel,
+          appearance: appearance,
+          manufacturerId: manufacturerId,
+          manufacturerData: manufacturerData,
         );
 
         if (device != null) {
-          _devices[macAddress] = device;
+          // Merge measurements from multiple packets (e.g., weather stations)
+          final existing = _devices[macAddress];
+          if (existing != null && device.measurements.isNotEmpty) {
+            // Create a map of measurements by type for merging
+            final measurementMap = <int, BthomeMeasurement>{};
+
+            // Add existing measurements first
+            for (final m in existing.measurements) {
+              measurementMap[m.type.objectId] = m;
+            }
+
+            // Update/add new measurements
+            for (final m in device.measurements) {
+              measurementMap[m.type.objectId] = m;
+            }
+
+            // Create merged device with combined measurements
+            _devices[macAddress] = device.copyWith(
+              measurements: measurementMap.values.toList(),
+              // Preserve existing scan response data if new one is missing
+              txPowerLevel: device.txPowerLevel ?? existing.txPowerLevel,
+              appearance: device.appearance ?? existing.appearance,
+              manufacturerId: device.manufacturerId ?? existing.manufacturerId,
+              esphomeVersion: device.esphomeVersion ?? existing.esphomeVersion,
+            );
+          } else {
+            _devices[macAddress] = device;
+          }
           notifyListeners();
         }
       }

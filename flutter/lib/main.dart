@@ -255,7 +255,7 @@ class DeviceCard extends StatelessWidget {
         color: theme.colorScheme.surfaceContainerLow,
         child: InkWell(
           borderRadius: BorderRadius.circular(12),
-          onLongPress: () => _copyAdvertisement(context),
+          onLongPress: () => _copyDeviceId(context),
           child: Padding(
             padding: const EdgeInsets.all(16),
             child: Row(
@@ -320,7 +320,7 @@ class DeviceCard extends StatelessWidget {
                     ),
                   ),
                 ),
-        onLongPress: () => _copyAdvertisement(context),
+        onLongPress: () => _copyDeviceId(context),
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: Column(
@@ -350,7 +350,21 @@ class DeviceCard extends StatelessWidget {
                       ],
                     ),
                   ),
-                  _SignalStrength(rssi: device.rssi),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      _SignalStrength(rssi: device.rssi),
+                      if (device.distanceString != null) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          device.distanceString!,
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: theme.colorScheme.outline,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
                 ],
               ),
               if (needsKey) ...[
@@ -373,12 +387,12 @@ class DeviceCard extends StatelessWidget {
     );
   }
 
-  void _copyAdvertisement(BuildContext context) {
-    final data = device.advertisementHex;
-    Clipboard.setData(ClipboardData(text: data));
+  void _copyDeviceId(BuildContext context) {
+    // On iOS this is a UUID, on Android it's the MAC address
+    Clipboard.setData(ClipboardData(text: device.macAddress));
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('Copied: $data'),
+        content: Text('Copied device ID'),
         duration: const Duration(seconds: 2),
         behavior: SnackBarBehavior.floating,
       ),
@@ -760,12 +774,36 @@ class _DeviceDetailsScreenState extends State<DeviceDetailsScreen> {
               label: 'Signal Strength',
               value: '${_device.rssi} dBm',
             ),
+            if (_device.txPowerLevel != null) ...[
+              const SizedBox(height: 8),
+              _InfoRow(
+                icon: Icons.podcasts,
+                label: 'TX Power',
+                value: '${_device.txPowerLevel} dBm',
+              ),
+            ],
+            if (_device.distanceString != null) ...[
+              const SizedBox(height: 8),
+              _InfoRow(
+                icon: Icons.straighten,
+                label: 'Distance',
+                value: _device.distanceString!,
+              ),
+            ],
             const SizedBox(height: 8),
             _InfoRow(
               icon: Icons.access_time,
               label: 'Last Advertisement',
               value: _formatTimeSince(_device.lastSeen),
             ),
+            if (_device.esphomeVersion != null) ...[
+              const SizedBox(height: 8),
+              _InfoRow(
+                icon: Icons.info_outline,
+                label: 'ESPHome Version',
+                value: _device.esphomeVersion!,
+              ),
+            ],
             if (_device.isEncrypted) ...[
               const SizedBox(height: 8),
               _InfoRow(
