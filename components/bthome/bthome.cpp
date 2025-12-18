@@ -411,6 +411,18 @@ void BTHome::build_scan_response_data_() {
   this->scan_rsp_data_[pos++] = BTHOME_SERVICE_UUID & 0xFF;         // UUID low byte
   this->scan_rsp_data_[pos++] = (BTHOME_SERVICE_UUID >> 8) & 0xFF;  // UUID high byte
 
+  // Add TX Power Level (for distance estimation)
+#ifdef USE_ESP32
+  // Convert esp_power_level_t to dBm: 0=-12, 1=-9, 2=-6, 3=-3, 4=0, 5=3, 6=6, 7=9
+  static const int8_t esp32_tx_power_dbm[] = {-12, -9, -6, -3, 0, 3, 6, 9};
+  int8_t tx_dbm = esp32_tx_power_dbm[this->tx_power_esp32_ & 0x07];
+#else
+  int8_t tx_dbm = this->tx_power_nrf52_;
+#endif
+  this->scan_rsp_data_[pos++] = 2;     // Length (type + 1 byte power)
+  this->scan_rsp_data_[pos++] = 0x0A;  // Type: TX Power Level
+  this->scan_rsp_data_[pos++] = static_cast<uint8_t>(tx_dbm);
+
   // Add Complete Local Name if set
   if (!this->device_name_.empty()) {
     size_t name_len = this->device_name_.length();
@@ -555,6 +567,14 @@ void BTHome::start_advertising_() {
   this->sd_[sd_count].type = BT_DATA_UUID16_ALL;
   this->sd_[sd_count].data_len = sizeof(svc_uuid_data);
   this->sd_[sd_count].data = svc_uuid_data;
+  sd_count++;
+
+  // Add TX Power Level
+  static int8_t tx_power_data;
+  tx_power_data = this->tx_power_nrf52_;
+  this->sd_[sd_count].type = BT_DATA_TX_POWER;
+  this->sd_[sd_count].data_len = sizeof(tx_power_data);
+  this->sd_[sd_count].data = reinterpret_cast<const uint8_t *>(&tx_power_data);
   sd_count++;
 
   if (!this->device_name_.empty()) {
