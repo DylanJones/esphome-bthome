@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -678,12 +679,17 @@ class DeviceDetailsScreen extends StatefulWidget {
 
 class _DeviceDetailsScreenState extends State<DeviceDetailsScreen> {
   late BthomeDevice _device;
+  Timer? _refreshTimer;
 
   @override
   void initState() {
     super.initState();
     _device = widget.device;
     widget.scanner.addListener(_onScannerUpdate);
+    // Refresh UI every second to update "Last Advertisement" time
+    _refreshTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
+    });
   }
 
   void _onScannerUpdate() {
@@ -698,6 +704,7 @@ class _DeviceDetailsScreenState extends State<DeviceDetailsScreen> {
 
   @override
   void dispose() {
+    _refreshTimer?.cancel();
     widget.scanner.removeListener(_onScannerUpdate);
     super.dispose();
   }
