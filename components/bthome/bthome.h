@@ -187,7 +187,7 @@ class BTHome : public Component {
   int8_t tx_power_nrf52_{0};
   struct bt_le_adv_param adv_param_;
   struct bt_data ad_[2];
-  struct bt_data sd_[2];  // Scan response data
+  struct bt_data sd_[3];  // Scan response data (service UUID, name, manufacturer)
 #endif
 };
 

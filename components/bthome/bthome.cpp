@@ -510,6 +510,15 @@ void BTHome::start_advertising_() {
     return;
   }
 
+  // Set scan response data (contains service UUID and device name)
+  if (this->scan_rsp_data_len_ > 0) {
+    ESP_LOGD(TAG, "Setting scan response data (%d bytes)", this->scan_rsp_data_len_);
+    err = esp_ble_gap_config_scan_rsp_data_raw(this->scan_rsp_data_, this->scan_rsp_data_len_);
+    if (err != ESP_OK) {
+      ESP_LOGW(TAG, "esp_ble_gap_config_scan_rsp_data_raw failed: %s", esp_err_to_name(err));
+    }
+  }
+
   // Start advertising directly (don't wait for GAP events)
   ESP_LOGD(TAG, "Starting advertising directly");
   err = esp_ble_gap_start_advertising(&this->ble_adv_params_);
@@ -533,6 +542,14 @@ void BTHome::start_advertising_() {
 
   // Set up scan response data
   size_t sd_count = 0;
+
+  // Add BTHome service UUID to scan response
+  static uint8_t svc_uuid_data[] = {BTHOME_SERVICE_UUID & 0xFF, (BTHOME_SERVICE_UUID >> 8) & 0xFF};
+  this->sd_[sd_count].type = BT_DATA_UUID16_ALL;
+  this->sd_[sd_count].data_len = sizeof(svc_uuid_data);
+  this->sd_[sd_count].data = svc_uuid_data;
+  sd_count++;
+
   if (!this->device_name_.empty()) {
     this->sd_[sd_count].type = BT_DATA_NAME_COMPLETE;
     this->sd_[sd_count].data_len = this->device_name_.length();
