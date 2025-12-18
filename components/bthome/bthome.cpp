@@ -1,5 +1,6 @@
 #include "bthome.h"
 #include "esphome/core/log.h"
+#include "esphome/core/version.h"
 
 #if defined(USE_ESP32) || defined(USE_NRF52)
 
@@ -419,13 +420,19 @@ void BTHome::build_scan_response_data_() {
     pos += name_len;
   }
 
-  // Add Manufacturer Specific Data if set
+  // Add Manufacturer Specific Data with ESPHome version
   if (this->has_manufacturer_id_) {
-    this->scan_rsp_data_[pos++] = 3;     // Length (type + 2 bytes manufacturer ID)
+    this->scan_rsp_data_[pos++] = 7;     // Length (type + 2 bytes manufacturer ID + 4 bytes version)
     this->scan_rsp_data_[pos++] = 0xFF;  // Type: Manufacturer Specific Data
     // Manufacturer ID (little-endian)
     this->scan_rsp_data_[pos++] = this->manufacturer_id_ & 0xFF;
     this->scan_rsp_data_[pos++] = (this->manufacturer_id_ >> 8) & 0xFF;
+    // ESPHome version code (little-endian, 4 bytes: year.month.patch)
+    uint32_t version = ESPHOME_VERSION_CODE;
+    this->scan_rsp_data_[pos++] = version & 0xFF;
+    this->scan_rsp_data_[pos++] = (version >> 8) & 0xFF;
+    this->scan_rsp_data_[pos++] = (version >> 16) & 0xFF;
+    this->scan_rsp_data_[pos++] = (version >> 24) & 0xFF;
   }
 
   this->scan_rsp_data_len_ = pos;
@@ -558,9 +565,15 @@ void BTHome::start_advertising_() {
   }
 
   if (this->has_manufacturer_id_) {
-    static uint8_t mfr_data[2];
+    // Manufacturer ID (2 bytes) + ESPHome version code (4 bytes)
+    static uint8_t mfr_data[6];
     mfr_data[0] = this->manufacturer_id_ & 0xFF;
     mfr_data[1] = (this->manufacturer_id_ >> 8) & 0xFF;
+    uint32_t version = ESPHOME_VERSION_CODE;
+    mfr_data[2] = version & 0xFF;
+    mfr_data[3] = (version >> 8) & 0xFF;
+    mfr_data[4] = (version >> 16) & 0xFF;
+    mfr_data[5] = (version >> 24) & 0xFF;
     this->sd_[sd_count].type = BT_DATA_MANUFACTURER_DATA;
     this->sd_[sd_count].data_len = sizeof(mfr_data);
     this->sd_[sd_count].data = mfr_data;

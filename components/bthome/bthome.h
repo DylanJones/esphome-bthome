@@ -140,8 +140,8 @@ class BTHome : public Component {
 
   // Device identification
   std::string device_name_;
-  uint16_t manufacturer_id_{0};
-  bool has_manufacturer_id_{false};
+  uint16_t manufacturer_id_{0x02E5};  // Default: Espressif (0x02E5)
+  bool has_manufacturer_id_{true};
   bool trigger_based_{false};  // True for devices that only send on events (buttons, etc.)
 
   // Encryption
