@@ -15,16 +15,65 @@ The **BTHome Receiver** component allows your ESP32 to receive and decode BTHome
 - Button and dimmer event triggers for automation
 - Multiple device support with individual configurations
 - Optional per-device encryption keys
+- **Two BLE stack options**: Bluedroid (default) or NimBLE (lightweight)
 
-## Dependencies
+## BLE Stack Selection
 
-This component requires the `esp32_ble_tracker` component:
+The BTHome Receiver supports two different BLE stacks: **Bluedroid** (default) and **NimBLE**. The choice of stack affects memory usage, features, and compatibility.
+
+### Bluedroid Stack (Default)
+
+The default BLE stack for ESP32. Use this when:
+- You need compatibility with other ESPHome BLE components (`esp32_ble_tracker`, `bluetooth_proxy`, etc.)
+- You want to use BLE for multiple purposes (scanning, connections, etc.)
+- You're already using the `esp32_ble` component
 
 ```yaml
 esp32_ble_tracker:
   scan_parameters:
     active: false
+
+bthome_receiver:
+  ble_stack: bluedroid  # Default, can be omitted
+  devices:
+    - mac_address: "AA:BB:CC:DD:EE:FF"
 ```
+
+### NimBLE Stack
+
+A lightweight, standalone BLE stack optimized for observer-only scenarios. Choose NimBLE when:
+- **Memory is limited** - Saves approximately 253KB flash and 10KB RAM
+- **Receiving only** - Your device only needs to receive BTHome advertisements
+- **No other BLE features needed** - You don't need BLE scanning for other purposes or connections
+- **Battery-powered devices** - Smaller footprint means less power consumption
+
+```yaml
+bthome_receiver:
+  ble_stack: nimble
+  devices:
+    - mac_address: "AA:BB:CC:DD:EE:FF"
+```
+
+:::tip[Memory Savings]
+NimBLE can free up significant resources on memory-constrained devices, making room for more features or reducing overall power consumption.
+:::
+
+:::caution[NimBLE Limitations]
+NimBLE is **standalone** and cannot coexist with other ESPHome BLE components like `esp32_ble`, `esp32_ble_tracker`, or `bluetooth_proxy`. If your configuration uses any of these components, you must use the default Bluedroid stack.
+:::
+
+### Stack Comparison
+
+Actual measurements from BTHome receiver on ESP32-S3:
+
+| Feature | Bluedroid | NimBLE | Savings |
+|---------|-----------|--------|---------|
+| Flash Usage | 1,151KB (62.7%) | 898KB (48.9%) | **~253KB** |
+| RAM Usage | 50KB (15.3%) | 40KB (12.3%) | **~10KB** |
+| BLE Scanning | Via esp32_ble_tracker | Built-in passive | - |
+| Compatible with esp32_ble | Yes | No | - |
+| Compatible with bluetooth_proxy | Yes | No | - |
+| Best For | Multi-function BLE | Receive-only gateway | - |
 
 ## Basic Configuration
 
@@ -335,16 +384,35 @@ bthome_receiver:
 
 The `steps` variable contains the dimmer step count (positive for increase, negative for decrease).
 
-## Complete Example
+## Complete Examples
 
-Here's a comprehensive example receiving data from multiple devices:
+### Bluedroid Stack (Default)
+
+Use this configuration when you need compatibility with other ESPHome BLE components:
 
 ```yaml
+esphome:
+  name: bthome-receiver-bluedroid
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+wifi:
+  ap:
+    ssid: "BTHome-Receiver"
+
+captive_portal:
+
+# Required for Bluedroid mode
 esp32_ble_tracker:
   scan_parameters:
     active: false
 
+# BTHome Receiver with Bluedroid (default)
 bthome_receiver:
+  ble_stack: bluedroid  # Can be omitted, this is the default
   devices:
     # Encrypted temperature sensor
     - mac_address: "AA:BB:CC:DD:EE:FF"
@@ -358,11 +426,7 @@ bthome_receiver:
         - button_index: 0
           event: "press"
           then:
-            - light.toggle: bedroom_light
-        - button_index: 0
-          event: "double_press"
-          then:
-            - scene.apply: sleep_mode
+            - logger.log: "Button pressed!"
 
 # Receive sensor data
 sensor:
@@ -375,13 +439,62 @@ sensor:
     battery:
       name: "Living Room Sensor Battery"
 
-  # Another device without encryption
+# Receive binary sensor data
+binary_sensor:
   - platform: bthome_receiver
-    mac_address: "77:88:99:AA:BB:CC"
+    mac_address: "AA:BB:CC:DD:EE:FF"
+    motion:
+      name: "Living Room Motion"
+```
+
+### NimBLE Stack (Lightweight)
+
+Use this configuration for memory-constrained devices or receive-only gateways:
+
+```yaml
+esphome:
+  name: bthome-receiver-nimble
+
+esp32:
+  board: seeed_xiao_esp32s3
+  framework:
+    type: esp-idf  # Required for NimBLE
+
+wifi:
+  ap:
+    ssid: "BTHome-Receiver"
+
+captive_portal:
+
+# BTHome Receiver with NimBLE (lightweight, standalone)
+# Note: Cannot coexist with esp32_ble_tracker or bluetooth_proxy
+bthome_receiver:
+  ble_stack: nimble
+  devices:
+    # Encrypted temperature sensor
+    - mac_address: "AA:BB:CC:DD:EE:FF"
+      name: "Living Room Sensor"
+      encryption_key: "231d39c1d7cc1ab1aee224cd096db932"
+
+    # Smart button with automation
+    - mac_address: "11:22:33:44:55:66"
+      name: "Bedroom Button"
+      on_button:
+        - button_index: 0
+          event: "press"
+          then:
+            - logger.log: "Button pressed!"
+
+# Receive sensor data
+sensor:
+  - platform: bthome_receiver
+    mac_address: "AA:BB:CC:DD:EE:FF"
     temperature:
-      name: "Outdoor Temperature"
-    pressure:
-      name: "Atmospheric Pressure"
+      name: "Living Room Temperature"
+    humidity:
+      name: "Living Room Humidity"
+    battery:
+      name: "Living Room Sensor Battery"
 
 # Receive binary sensor data
 binary_sensor:
@@ -389,20 +502,6 @@ binary_sensor:
     mac_address: "AA:BB:CC:DD:EE:FF"
     motion:
       name: "Living Room Motion"
-
-  - platform: bthome_receiver
-    mac_address: "99:88:77:66:55:44"
-    door:
-      name: "Front Door"
-    window:
-      name: "Living Room Window"
-
-# Receive text data
-text_sensor:
-  - platform: bthome_receiver
-    mac_address: "AA:BB:CC:DD:EE:FF"
-    text:
-      name: "Sensor Status Message"
 ```
 
 ## Multiple Device Configuration
