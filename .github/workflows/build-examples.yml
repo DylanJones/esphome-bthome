@@ -38,7 +38,12 @@ jobs:
           python-version: '3.12'
 
       - name: Compile ${{ matrix.config }}
-        run: pipx run esphome compile ${{ matrix.config }}
+        run: |
+          pipx run esphome compile ${{ matrix.config }} 2>&1 | tee build.log
+          echo "### Memory Usage" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          grep -E "(RAM:|Flash:)" build.log >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
 
   build-nrf52:
     name: Build ${{ matrix.config }}
@@ -58,4 +63,9 @@ jobs:
           python-version: '3.12'
 
       - name: Compile ${{ matrix.config }}
-        run: pipx run esphome compile ${{ matrix.config }}
+        run: |
+          pipx run esphome compile ${{ matrix.config }} 2>&1 | tee build.log
+          echo "### Memory Usage" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          grep -E "(RAM|ROM|Memory)" build.log | tail -5 >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY

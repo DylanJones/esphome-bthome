@@ -66,6 +66,17 @@ binary_sensor:
     on_press:
       - switch.toggle: relay_2
 
+  # Template binary sensors to expose switch states to BTHome
+  - platform: template
+    id: switch_1_state
+    name: "Switch 1 State"
+    lambda: 'return id(relay_1).state;'
+
+  - platform: template
+    id: switch_2_state
+    name: "Switch 2 State"
+    lambda: 'return id(relay_2).state;'
+
 #
 # ========== RELAY OUTPUTS ==========
 #
@@ -122,18 +133,6 @@ interval:
 #
 # ========== BTHOME CONFIGURATION ==========
 #
-
-# Template binary sensors to expose switch states to BTHome
-binary_sensor:
-  - platform: template
-    id: switch_1_state
-    name: "Switch 1 State"
-    lambda: 'return id(relay_1).state;'
-
-  - platform: template
-    id: switch_2_state
-    name: "Switch 2 State"
-    lambda: 'return id(relay_2).state;'
 
 bthome:
   # Advertising interval (20ms - 10240ms)
