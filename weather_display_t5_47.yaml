@@ -7,16 +7,16 @@ substitutions:
   device_name: weather-display
   friendly_name: Weather Display
   # BTHome weather station MAC address
-  weather_station_mac: "AA:BB:CC:DD:EE:FF"
+  weather_station_mac: "4E:E3:D1:5F:B9:08"
 
 esphome:
   name: ${device_name}
   friendly_name: ${friendly_name}
   on_boot:
-    priority: -100  # Run after everything else
+    priority: -100 # Run after everything else
     then:
-      - delay: 2s
-      - logger.log: "Boot complete, BLE should be ready"
+    - delay: 2s
+    - logger.log: "Boot complete, BLE should be ready"
 
 # Import reusable packages
 packages:
@@ -26,6 +26,7 @@ packages:
   widgets: !include packages/display_widgets.yaml
 
 logger:
+api:
 
 wifi:
   ssid: !secret wifi_ssid
@@ -36,12 +37,22 @@ wifi:
 ota:
 - platform: esphome
 
+web_server:
+  port: 80
+
 time:
 - platform: sntp
   id: ntp_time
   timezone: Europe/Ljubljana
   on_time_sync:
   - component.update: epaper
+  on_time:
+    # Reset daily rain counter at midnight
+    - seconds: 0
+      minutes: 0
+      hours: 0
+      then:
+        - lambda: id(rain_daily).publish_state(0);
 
 # Historical graphs for sensor data (24h history)
 graph:
@@ -49,7 +60,7 @@ graph:
   sensor: outdoor_temp
   duration: 24h
   width: 220
-  height: 170
+  height: 155
   x_grid: 6h
   y_grid: 10
   min_value: -10
@@ -59,7 +70,7 @@ graph:
   sensor: outdoor_humidity
   duration: 24h
   width: 220
-  height: 170
+  height: 155
   x_grid: 6h
   y_grid: 25
   min_value: 0
@@ -69,7 +80,7 @@ graph:
   sensor: wind_speed
   duration: 24h
   width: 220
-  height: 170
+  height: 155
   x_grid: 6h
   y_grid: 5
   min_value: 0
@@ -79,7 +90,7 @@ graph:
   sensor: rain
   duration: 24h
   width: 220
-  height: 170
+  height: 155
   x_grid: 6h
   y_grid: 10
   min_value: 0
@@ -111,17 +122,36 @@ binary_sensor:
 sensor:
 - platform: bthome_receiver
   mac_address: ${weather_station_mac}
-  # Temperature & Humidity
-  temperature:
+  # Temperature (0x45 = temperature_01, 0.1°C resolution)
+  temperature_01:
     name: "Temperature"
     id: outdoor_temp
-  humidity:
+  # Humidity (0x2E = humidity_uint8, 1% resolution)
+  humidity_uint8:
     name: "Humidity"
     id: outdoor_humidity
-  # Rain (precipitation object 0x5F)
+  # Rain (precipitation object 0x5F) - this is cumulative total from device
   precipitation:
-    name: "Rain"
-    id: rain
+    name: "Rain Total (Lifetime)"
+    id: rain_total
+    internal: true
+    on_value:
+      then:
+        - lambda: |-
+            // Calculate rain delta (difference from last reading)
+            static float last_rain = NAN;
+            float current = id(rain_total).state;
+            if (!std::isnan(last_rain) && current >= last_rain) {
+              float delta = current - last_rain;
+              // Update rain rate (delta since last update)
+              id(rain_rate).publish_state(delta);
+              // Accumulate daily rain
+              id(rain_daily).publish_state(id(rain_daily).state + delta);
+            } else if (std::isnan(id(rain_daily).state)) {
+              // Initialize daily rain to 0
+              id(rain_daily).publish_state(0);
+            }
+            last_rain = current;
   # Wind speed (speed object 0x44)
   speed:
     name: "Wind Speed"
@@ -130,10 +160,63 @@ sensor:
   direction:
     name: "Wind Direction"
     id: wind_direction
-  # Solar power (power object 0x0B)
-  power:
-    name: "Solar Power"
-    id: solar_power
+  # Illuminance (0x05)
+  illuminance:
+    name: "Illuminance"
+    id: illuminance
+  # Battery (0x01)
+  battery:
+    name: "Weather Station Battery"
+  # Pressure (0x04)
+  pressure:
+    name: "Pressure"
+    id: pressure_sensor
+  # Dewpoint (0x08)
+  dewpoint:
+    name: "Dewpoint"
+
+# Rain rate (change since last reading)
+- platform: template
+  id: rain_rate
+  name: "Rain Rate"
+  unit_of_measurement: "mm"
+  accuracy_decimals: 1
+  icon: "mdi:weather-pouring"
+
+# Daily accumulated rain (resets at midnight)
+- platform: template
+  id: rain_daily
+  name: "Rain Today"
+  unit_of_measurement: "mm"
+  accuracy_decimals: 1
+  icon: "mdi:weather-rainy"
+  lambda: |-
+    if (std::isnan(id(rain_daily).state)) return 0.0f;
+    return id(rain_daily).state;
+  update_interval: never
+
+# Alias for display (uses daily rain)
+- platform: template
+  id: rain
+  name: "Rain"
+  unit_of_measurement: "mm"
+  accuracy_decimals: 1
+  lambda: return id(rain_daily).state;
+  update_interval: 10s
+
+# Solar power calculated from illuminance (1 W/m² ≈ 120 lux)
+- platform: template
+  id: solar_power
+  name: "Solar Power"
+  unit_of_measurement: "W/m²"
+  accuracy_decimals: 0
+  icon: "mdi:solar-power"
+  lambda: |-
+    if (id(illuminance).has_state() && !std::isnan(id(illuminance).state)) {
+      return id(illuminance).state / 120.0;
+    }
+    return NAN;
+  update_interval: 10s
 
 # Wind gusts placeholder (TODO: add sensor index support to bthome_receiver)
 - platform: template
@@ -166,9 +249,11 @@ display:
     int cy = 175;  // compass center y
     int r = 100;   // compass radius
 
-    // Draw compass circle
+    // Draw compass circle (thick - 4 concentric circles)
     it.circle(cx, cy, r);
+    it.circle(cx, cy, r - 1);
     it.circle(cx, cy, r - 2);
+    it.circle(cx, cy, r - 3);
 
     // Draw cardinal directions
     it.print(cx, cy - r + 15, id(font_label), TextAlign::TOP_CENTER, "N");
@@ -183,14 +268,15 @@ display:
     it.print(cx - ic_off, cy + ic_off, id(font_footer), TextAlign::CENTER, "SW");
     it.print(cx - ic_off, cy - ic_off, id(font_footer), TextAlign::CENTER, "NW");
 
-    // Draw tick marks
+    // Draw tick marks (thick - double lines)
     for (int i = 0; i < 360; i += 30) {
       float rad = i * M_PI / 180.0;
-      int x1 = cx + (r - 8) * sin(rad);
-      int y1 = cy - (r - 8) * cos(rad);
+      int x1 = cx + (r - 10) * sin(rad);
+      int y1 = cy - (r - 10) * cos(rad);
       int x2 = cx + r * sin(rad);
       int y2 = cy - r * cos(rad);
       it.line(x1, y1, x2, y2);
+      it.line(x1 + 1, y1, x2 + 1, y2);
     }
 
     // Wind direction arrow
@@ -203,10 +289,12 @@ display:
       int ax = cx + arrow_len * sin(rad);
       int ay = cy - arrow_len * cos(rad);
 
-      // Draw arrow line
+      // Draw arrow line (thick - triple lines)
       it.line(cx, cy, ax, ay);
+      it.line(cx + 1, cy, ax + 1, ay);
+      it.line(cx - 1, cy, ax - 1, ay);
 
-      // Arrow head
+      // Arrow head (thick)
       float head_angle = 25 * M_PI / 180.0;
       int head_len = 15;
       int hx1 = ax - head_len * sin(rad - head_angle);
@@ -214,7 +302,9 @@ display:
       int hx2 = ax - head_len * sin(rad + head_angle);
       int hy2 = ay + head_len * cos(rad + head_angle);
       it.line(ax, ay, hx1, hy1);
+      it.line(ax + 1, ay, hx1 + 1, hy1);
       it.line(ax, ay, hx2, hy2);
+      it.line(ax + 1, ay, hx2 + 1, hy2);
 
       // Direction text in center
       const char* dir_str = "N";
@@ -274,9 +364,9 @@ display:
     it.print(main_x + 180, sec_y, id(icon_mdi), TextAlign::TOP_LEFT, ICON_SOLAR);
     it.print(main_x + 235, sec_y + 5, id(font_label), TextAlign::TOP_LEFT, "Solar");
     if (id(solar_power).has_state() && !std::isnan(id(solar_power).state)) {
-      it.printf(main_x + 235, sec_y + 30, id(font_unit), TextAlign::TOP_LEFT, "%.0f W", id(solar_power).state);
+      it.printf(main_x + 235, sec_y + 30, id(font_unit), TextAlign::TOP_LEFT, "%.0f W/m²", id(solar_power).state);
     } else {
-      it.print(main_x + 235, sec_y + 30, id(font_unit), TextAlign::TOP_LEFT, "-- W");
+      it.print(main_x + 235, sec_y + 30, id(font_unit), TextAlign::TOP_LEFT, "-- W/m²");
     }
 
     // Wind Gusts
@@ -288,37 +378,42 @@ display:
     }
 
     // === LINE GRAPHS AREA (bottom) - 24h history ===
-    int graph_y = 310;
-    int graph_h = 170;
+    int graph_y = 325;  // Moved lower to avoid text clipping
+    int graph_h = 155;
     int graph_w = 220;
     int graph_spacing = (W - 4 * graph_w) / 5;
 
     // Temperature graph
     int gx = graph_spacing;
-    it.print(gx, graph_y - 25, id(font_footer), TextAlign::TOP_LEFT, "Temperature (°C)");
+    it.print(gx, graph_y - 8, id(font_footer), TextAlign::BOTTOM_LEFT, "Temperature (°C)");
     it.rectangle(gx - 2, graph_y - 2, graph_w + 4, graph_h + 4);
+    it.rectangle(gx - 3, graph_y - 3, graph_w + 6, graph_h + 6);
     it.graph(gx, graph_y, id(graph_temp));
 
     // Humidity graph
     gx += graph_w + graph_spacing;
-    it.print(gx, graph_y - 25, id(font_footer), TextAlign::TOP_LEFT, "Humidity (%)");
+    it.print(gx, graph_y - 8, id(font_footer), TextAlign::BOTTOM_LEFT, "Humidity (%)");
     it.rectangle(gx - 2, graph_y - 2, graph_w + 4, graph_h + 4);
+    it.rectangle(gx - 3, graph_y - 3, graph_w + 6, graph_h + 6);
     it.graph(gx, graph_y, id(graph_humidity));
 
     // Wind graph
     gx += graph_w + graph_spacing;
-    it.print(gx, graph_y - 25, id(font_footer), TextAlign::TOP_LEFT, "Wind (m/s)");
+    it.print(gx, graph_y - 8, id(font_footer), TextAlign::BOTTOM_LEFT, "Wind (m/s)");
     it.rectangle(gx - 2, graph_y - 2, graph_w + 4, graph_h + 4);
+    it.rectangle(gx - 3, graph_y - 3, graph_w + 6, graph_h + 6);
     it.graph(gx, graph_y, id(graph_wind));
 
     // Rain graph
     gx += graph_w + graph_spacing;
-    it.print(gx, graph_y - 25, id(font_footer), TextAlign::TOP_LEFT, "Rain (mm)");
+    it.print(gx, graph_y - 8, id(font_footer), TextAlign::BOTTOM_LEFT, "Rain (mm)");
     it.rectangle(gx - 2, graph_y - 2, graph_w + 4, graph_h + 4);
+    it.rectangle(gx - 3, graph_y - 3, graph_w + 6, graph_h + 6);
     it.graph(gx, graph_y, id(graph_rain));
 
-    // === FOOTER ===
+    // === FOOTER === (thick line)
     it.line(M, H - 30, W - M, H - 30);
+    it.line(M, H - 31, W - M, H - 31);
     it.strftime(M, H - 5, id(font_footer), TextAlign::BASELINE_LEFT, "Last update: %H:%M:%S", id(ntp_time).now());
 
     // Battery indicator in footer (right side)

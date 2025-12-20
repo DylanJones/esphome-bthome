@@ -296,7 +296,7 @@ void BTHomeReceiverHub::dump_config() {
 }
 
 void BTHomeReceiverHub::dump_advertisement_(uint64_t address, const uint8_t *data, size_t len) {
-  // Format MAC address as AA:BB:CC:DD:EE:FF
+  // Format MAC address
   char mac_str[18];
   snprintf(mac_str, sizeof(mac_str), "%02X:%02X:%02X:%02X:%02X:%02X",
            (uint8_t)(address & 0xFF),
@@ -307,39 +307,23 @@ void BTHomeReceiverHub::dump_advertisement_(uint64_t address, const uint8_t *dat
            (uint8_t)((address >> 40) & 0xFF));
 
   if (len < 1) {
-    ESP_LOGI(TAG, "[DUMP] MAC: %s - Empty advertisement", mac_str);
     return;
+  }
+
+  // Build raw hex string
+  std::string raw_hex;
+  for (size_t i = 0; i < len; i++) {
+    char hex[4];
+    snprintf(hex, sizeof(hex), "%02X ", data[i]);
+    raw_hex += hex;
   }
 
   // First byte is device_info
   uint8_t device_info = data[0];
   bool is_encrypted = (device_info & BTHOME_DEVICE_INFO_ENCRYPTED_MASK) != 0;
 
-  // Build raw hex string for reference
-  std::string raw_hex;
-  for (size_t i = 0; i < len && i < 32; i++) {
-    char hex[4];
-    snprintf(hex, sizeof(hex), "%02X ", data[i]);
-    raw_hex += hex;
-  }
-  if (len > 32) {
-    raw_hex += "...";
-  }
-
-  ESP_LOGI(TAG, "[DUMP] ========================================");
-  ESP_LOGI(TAG, "[DUMP] MAC: %s", mac_str);
-  ESP_LOGI(TAG, "[DUMP] Encrypted: %s", is_encrypted ? "yes" : "no");
-  ESP_LOGI(TAG, "[DUMP] Raw data (%d bytes): %s", len, raw_hex.c_str());
-
-  if (is_encrypted) {
-    // For encrypted devices, just show the MAC and note it needs a key
-    ESP_LOGI(TAG, "[DUMP] Config hint: Device is encrypted, you need the encryption_key");
-    ESP_LOGI(TAG, "[DUMP] ----------------------------------------");
-    return;
-  }
-
-  // Parse and display unencrypted measurements
-  ESP_LOGI(TAG, "[DUMP] Measurements:");
+  // Build measurements string
+  std::string measurements;
   size_t pos = 1;  // Skip device_info
 
   while (pos < len) {
@@ -348,26 +332,16 @@ void BTHomeReceiverHub::dump_advertisement_(uint64_t address, const uint8_t *dat
     uint8_t object_id = data[pos++];
 
     // Get human-readable name
-    const char *name = "unknown";
+    const char *name = "?";
     auto name_it = OBJECT_ID_NAMES.find(object_id);
     if (name_it != OBJECT_ID_NAMES.end()) {
       name = name_it->second;
     }
 
     // Handle special types
-    if (object_id == OBJECT_ID_BUTTON) {
+    if (object_id == OBJECT_ID_BUTTON || object_id == OBJECT_ID_DIMMER) {
       if (pos + 1 > len) break;
-      uint8_t event_data = data[pos++];
-      uint8_t button_index = (event_data >> 4) & 0x0F;
-      uint8_t event_type = event_data & 0x0F;
-      ESP_LOGI(TAG, "[DUMP]   - button (0x%02X): index=%d, event=0x%02X", object_id, button_index, event_type);
-      continue;
-    }
-
-    if (object_id == OBJECT_ID_DIMMER) {
-      if (pos + 1 > len) break;
-      int8_t steps = static_cast<int8_t>(data[pos++]);
-      ESP_LOGI(TAG, "[DUMP]   - dimmer (0x%02X): steps=%d", object_id, steps);
+      pos++;
       continue;
     }
 
@@ -375,91 +349,48 @@ void BTHomeReceiverHub::dump_advertisement_(uint64_t address, const uint8_t *dat
       if (pos + 1 > len) break;
       uint8_t str_len = data[pos++];
       if (pos + str_len > len) break;
-      if (object_id == OBJECT_ID_TEXT) {
-        std::string text(reinterpret_cast<const char *>(data + pos), str_len);
-        ESP_LOGI(TAG, "[DUMP]   - text (0x%02X): '%s'", object_id, text.c_str());
-      } else {
-        std::string hex_str;
-        for (uint8_t i = 0; i < str_len; i++) {
-          char hex[3];
-          snprintf(hex, sizeof(hex), "%02X", data[pos + i]);
-          if (i > 0) hex_str += " ";
-          hex_str += hex;
-        }
-        ESP_LOGI(TAG, "[DUMP]   - raw (0x%02X): %s", object_id, hex_str.c_str());
-      }
       pos += str_len;
       continue;
     }
 
-    // Look up standard object type
     auto it = OBJECT_TYPE_MAP.find(object_id);
-    if (it == OBJECT_TYPE_MAP.end()) {
-      ESP_LOGI(TAG, "[DUMP]   - unknown (0x%02X): <cannot parse, stopping>", object_id);
-      break;
-    }
+    if (it == OBJECT_TYPE_MAP.end()) break;
 
     const ObjectTypeInfo &type_info = it->second;
+    if (pos + type_info.data_bytes > len) break;
 
-    if (pos + type_info.data_bytes > len) {
-      ESP_LOGI(TAG, "[DUMP]   - %s (0x%02X): <incomplete data>", name, object_id);
-      break;
-    }
-
-    // Decode value
+    char val_str[32];
     if (type_info.is_binary_sensor) {
-      bool value = data[pos] != 0;
-      ESP_LOGI(TAG, "[DUMP]   - %s (0x%02X): %s", name, object_id, value ? "ON" : "OFF");
+      snprintf(val_str, sizeof(val_str), "%s=%s", name, data[pos] ? "ON" : "OFF");
     } else {
       int32_t raw_value = 0;
       if (type_info.is_signed) {
         switch (type_info.data_bytes) {
-          case 1:
-            raw_value = static_cast<int8_t>(data[pos]);
-            break;
-          case 2:
-            raw_value = static_cast<int16_t>(data[pos] | (data[pos + 1] << 8));
-            break;
+          case 1: raw_value = static_cast<int8_t>(data[pos]); break;
+          case 2: raw_value = static_cast<int16_t>(data[pos] | (data[pos + 1] << 8)); break;
           case 3:
             raw_value = data[pos] | (data[pos + 1] << 8) | (data[pos + 2] << 16);
             if (raw_value & 0x800000) raw_value |= 0xFF000000;
             break;
-          case 4:
-            raw_value = data[pos] | (data[pos + 1] << 8) | (data[pos + 2] << 16) | (data[pos + 3] << 24);
-            break;
+          case 4: raw_value = data[pos] | (data[pos + 1] << 8) | (data[pos + 2] << 16) | (data[pos + 3] << 24); break;
         }
       } else {
-        uint32_t unsigned_value = 0;
         switch (type_info.data_bytes) {
-          case 1:
-            unsigned_value = data[pos];
-            break;
-          case 2:
-            unsigned_value = data[pos] | (data[pos + 1] << 8);
-            break;
-          case 3:
-            unsigned_value = data[pos] | (data[pos + 1] << 8) | (data[pos + 2] << 16);
-            break;
-          case 4:
-            unsigned_value = data[pos] | (data[pos + 1] << 8) | (data[pos + 2] << 16) | (data[pos + 3] << 24);
-            break;
+          case 1: raw_value = data[pos]; break;
+          case 2: raw_value = data[pos] | (data[pos + 1] << 8); break;
+          case 3: raw_value = data[pos] | (data[pos + 1] << 8) | (data[pos + 2] << 16); break;
+          case 4: raw_value = data[pos] | (data[pos + 1] << 8) | (data[pos + 2] << 16) | (data[pos + 3] << 24); break;
         }
-        raw_value = unsigned_value;
       }
       float value = raw_value * type_info.factor;
-      ESP_LOGI(TAG, "[DUMP]   - %s (0x%02X): %.3f (raw: %d)", name, object_id, value, raw_value);
+      snprintf(val_str, sizeof(val_str), "%s=%.2f", name, value);
     }
+    if (!measurements.empty()) measurements += " ";
+    measurements += val_str;
     pos += type_info.data_bytes;
   }
 
-  // Print YAML config hint
-  ESP_LOGI(TAG, "[DUMP] ----------------------------------------");
-  ESP_LOGI(TAG, "[DUMP] Example YAML config:");
-  ESP_LOGI(TAG, "[DUMP]   bthome_receiver:");
-  ESP_LOGI(TAG, "[DUMP]     devices:");
-  ESP_LOGI(TAG, "[DUMP]       - mac_address: \"%s\"", mac_str);
-  ESP_LOGI(TAG, "[DUMP]         name: \"My Device\"");
-  ESP_LOGI(TAG, "[DUMP] ----------------------------------------");
+  ESP_LOGI(TAG, "[%s] %s| %s", mac_str, is_encrypted ? "ENC " : "", measurements.c_str());
 }
 
 void BTHomeReceiverHub::loop() {
