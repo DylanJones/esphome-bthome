@@ -38,10 +38,10 @@ external_components:
 #
 
 binary_sensor:
-  # Button 1 - physical wall switch input (D0)
+  # Button 1 - physical wall switch input (D0 = P0.02)
   - platform: gpio
     pin:
-      number: GPIO0
+      number: 2
       mode: INPUT_PULLUP
       inverted: true
     id: button_1
@@ -52,10 +52,10 @@ binary_sensor:
     on_press:
       - switch.toggle: relay_1
 
-  # Button 2 - physical wall switch input (D1)
+  # Button 2 - physical wall switch input (D1 = P0.03)
   - platform: gpio
     pin:
-      number: GPIO1
+      number: 3
       mode: INPUT_PULLUP
       inverted: true
     id: button_2
@@ -82,16 +82,16 @@ binary_sensor:
 #
 
 switch:
-  # Relay 1 - controls load 1 (D2)
+  # Relay 1 - controls load 1 (D2 = P0.28)
   - platform: gpio
-    pin: GPIO2
+    pin: 28
     id: relay_1
     name: "Switch 1"
     restore_mode: RESTORE_DEFAULT_OFF
 
-  # Relay 2 - controls load 2 (D3)
+  # Relay 2 - controls load 2 (D3 = P0.29)
   - platform: gpio
-    pin: GPIO3
+    pin: 29
     id: relay_2
     name: "Switch 2"
     restore_mode: RESTORE_DEFAULT_OFF
@@ -101,14 +101,14 @@ switch:
 #
 
 output:
-  # LED 1 - indicates relay 1 state (D4/SDA)
+  # LED 1 - indicates relay 1 state (D4/SDA = P0.04)
   - platform: gpio
-    pin: GPIO4
+    pin: 4
     id: led_1
 
-  # LED 2 - indicates relay 2 state (D5/SCL)
+  # LED 2 - indicates relay 2 state (D5/SCL = P0.05)
   - platform: gpio
-    pin: GPIO5
+    pin: 5
     id: led_2
 
 # Sync LEDs with relay states
