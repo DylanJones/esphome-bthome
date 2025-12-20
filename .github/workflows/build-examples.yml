@@ -37,6 +37,13 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-esp32-${{ hashFiles('components/**') }}
+          restore-keys: pio-esp32-
+
       - name: Compile ${{ matrix.config }}
         run: |
           pipx run esphome compile ${{ matrix.config }} 2>&1 | tee build.log
@@ -61,6 +68,13 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-nrf52-${{ hashFiles('components/**') }}
+          restore-keys: pio-nrf52-
 
       - name: Compile ${{ matrix.config }}
         run: |
