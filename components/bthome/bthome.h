@@ -157,6 +157,9 @@ class BTHome : public Component {
   std::array<uint8_t, 16> encryption_key_{};
   uint32_t counter_{0};
 
+  // Packet ID for deduplication (increments only when data changes, not on retransmits)
+  uint8_t packet_id_{0};
+
   // Advertisement data
   uint8_t adv_data_[MAX_BLE_ADVERTISEMENT_SIZE];
   size_t adv_data_len_{0};

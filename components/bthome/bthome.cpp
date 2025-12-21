@@ -352,6 +352,12 @@ void BTHome::build_advertisement_data_() {
 
   size_t measurement_start = pos;
 
+  // Packet ID (object 0x00) - helps receivers deduplicate retransmissions
+  // Only incremented when build_advertisement_data_() is called (new data)
+  // Retransmissions reuse the same advertisement data without rebuilding
+  this->adv_data_[pos++] = 0x00;  // Object ID: packet_id
+  this->adv_data_[pos++] = this->packet_id_;
+
   // Handle immediate advertising - single sensor only
   if (this->immediate_advertising_pending_) {
 #ifdef USE_BINARY_SENSOR
@@ -464,7 +470,10 @@ void BTHome::build_advertisement_data_() {
 
   this->adv_data_len_ = pos;
 
-  ESP_LOGD(TAG, "Built advertisement data (%zu bytes)", this->adv_data_len_);
+  // Increment packet_id for next data change (wraps at 255)
+  this->packet_id_++;
+
+  ESP_LOGD(TAG, "Built advertisement data (%zu bytes, packet_id=%u)", this->adv_data_len_, (uint8_t)(this->packet_id_ - 1));
 #ifdef USE_SENSOR
   if (this->measurements_.size() > 1) {
     ESP_LOGD(TAG, "  Sensor rotation index: %zu/%zu", this->current_sensor_index_, this->measurements_.size());
