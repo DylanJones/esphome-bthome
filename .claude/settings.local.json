@@ -29,7 +29,9 @@
       "Bash(python3:*)",
       "Bash(xargs cat:*)",
       "WebFetch(domain:api.github.com)",
-      "WebFetch(domain:docs.espressif.com)"
+      "WebFetch(domain:docs.espressif.com)",
+      "Bash(git -C /Users/dz0ny/esphome-bthome add -A)",
+      "Bash(git -C /Users/dz0ny/esphome-bthome commit -m \"$\\(cat <<''EOF''\nrefactor\\(bthome_receiver\\): replace dump_advertisements with periodic dump_interval\n\n- Add dump_interval config option for periodic device discovery logging\n- Cache detected devices and log summary at configurable intervals\n- Apply ESPHome coding conventions \\(std::array, std::vector optimizations\\)\n- Change debug logs to verbose level to reduce log noise\n- Disable NimBLE internal logging completely\n- Update documentation with new dump_interval feature\nEOF\n\\)\")"
     ]
   }
 }

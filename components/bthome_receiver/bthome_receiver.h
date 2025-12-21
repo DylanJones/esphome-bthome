@@ -4,6 +4,9 @@
 #include "esphome/core/helpers.h"
 #include "esphome/core/automation.h"
 
+// ESP-IDF timer for time tracking
+#include <esp_timer.h>
+
 // Platform-specific includes based on BLE stack
 #ifdef USE_BTHOME_RECEIVER_NIMBLE
   // NimBLE stack (lighter weight, observer-only)
@@ -11,7 +14,6 @@
   #include "nimble/nimble_port_freertos.h"
   #include "host/ble_hs.h"
   #include "host/util/util.h"
-  #include <esp_timer.h>
   #include <freertos/FreeRTOS.h>
   #include <freertos/semphr.h>
 #elif defined(USE_BTHOME_RECEIVER_BLUEDROID)
@@ -76,17 +78,21 @@ class BTHomeDevice;
 
 // =============================================================================
 // BTHomeSensor - Represents a numeric sensor value from a BTHome device
+// Supports indexing for multiple sensors of the same object_id (e.g., speed + gusts)
 // =============================================================================
 #ifdef USE_SENSOR
 class BTHomeSensor {
  public:
-  BTHomeSensor(uint8_t object_id, sensor::Sensor *sensor) : object_id_(object_id), sensor_(sensor) {}
+  BTHomeSensor(uint8_t object_id, uint8_t index, sensor::Sensor *sensor)
+      : object_id_(object_id), index_(index), sensor_(sensor) {}
 
   uint8_t get_object_id() const { return this->object_id_; }
+  uint8_t get_index() const { return this->index_; }
   sensor::Sensor *get_sensor() { return this->sensor_; }
 
  protected:
   uint8_t object_id_;
+  uint8_t index_;  // For multiple sensors of same type (0=first, 1=second, etc.)
   sensor::Sensor *sensor_;
 };
 #endif
@@ -171,8 +177,8 @@ class BTHomeDevice : public Parented<BTHomeReceiverHub> {
   bool parse_advertisement(const std::vector<uint8_t> &service_data);
 
 #ifdef USE_SENSOR
-  void add_sensor(uint8_t object_id, sensor::Sensor *sensor) {
-    this->sensors_.push_back(new BTHomeSensor(object_id, sensor));
+  void add_sensor(uint8_t object_id, uint8_t index, sensor::Sensor *sensor) {
+    this->sensors_.push_back(new BTHomeSensor(object_id, index, sensor));
   }
 #endif
 
@@ -200,7 +206,7 @@ class BTHomeDevice : public Parented<BTHomeReceiverHub> {
   void parse_measurements_(const uint8_t *data, size_t len);
 
   // Publish values to registered sensors
-  void publish_sensor_value_(uint8_t object_id, float value);
+  void publish_sensor_value_(uint8_t object_id, uint8_t index, float value);
   void publish_binary_sensor_value_(uint8_t object_id, bool value);
   void publish_text_value_(uint8_t object_id, const std::string &value);
 
@@ -249,9 +255,8 @@ class BTHomeReceiverHub : public Component {
   // Register a device to monitor
   void register_device(BTHomeDevice *device);
 
-  // Enable/disable advertisement dumping for discovery
-  void set_dump_advertisements(bool dump) { this->dump_advertisements_ = dump; }
-  bool get_dump_advertisements() const { return this->dump_advertisements_; }
+  // Set interval for periodic dump of all detected devices (in ms, 0 = disabled)
+  void set_dump_interval(uint32_t interval) { this->dump_interval_ = interval; }
 
 #ifdef USE_BTHOME_RECEIVER_BLUEDROID
   // ESPBTDeviceListener interface - called when BLE advertisement is received
@@ -264,14 +269,32 @@ class BTHomeReceiverHub : public Component {
 #endif
 
  protected:
-  // Device registry (MAC address -> BTHomeDevice)
-  std::map<uint64_t, BTHomeDevice *> devices_;
+  // Device registry - using vector for small dataset optimization (typically <10 devices)
+  std::vector<BTHomeDevice *> devices_;
 
-  // Dump all advertisements for discovery mode
-  bool dump_advertisements_{false};
+  // Periodic dump interval (ms, 0 = disabled)
+  uint32_t dump_interval_{0};
+  uint32_t last_dump_time_{0};
+
+  // Cache of detected BTHome devices for periodic dump
+  // Stores: MAC address -> (last_data, last_seen_time)
+  struct DetectedDevice {
+    std::vector<uint8_t> last_data;
+    uint32_t last_seen{0};
+  };
+  std::vector<std::pair<uint64_t, DetectedDevice>> detected_devices_;
 
   // Dump an advertisement to the log (for discovery mode)
   void dump_advertisement_(uint64_t address, const uint8_t *data, size_t len);
+
+  // Find a device by MAC address (linear search, efficient for small datasets)
+  BTHomeDevice *find_device_(uint64_t address);
+
+  // Cache device data for periodic dump
+  void cache_device_data_(uint64_t address, const uint8_t *data, size_t len);
+
+  // Dump all cached devices (for periodic summary)
+  void dump_all_devices_();
 
 #ifdef USE_BTHOME_RECEIVER_NIMBLE
   // NimBLE-specific members

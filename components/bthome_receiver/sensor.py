@@ -45,16 +45,17 @@ from esphome.const import (
 UNIT_METERS_PER_SECOND = "m/s"
 
 from . import (
-    bthome_receiver_ns,
     BTHomeReceiverHub,
     BTHomeDevice,
-    BTHomeSensor,
     SENSOR_TYPES,
     CONF_ENCRYPTION_KEY,
     validate_encryption_key,
 )
 
 DEPENDENCIES = ["bthome_receiver"]
+
+# Configuration key for sensor index (for multiple sensors of same type)
+CONF_INDEX = "index"
 
 # Map sensor type names to their metadata for ESPHome integration
 # Format: type_name: (device_class, unit_of_measurement, state_class, accuracy_decimals)
@@ -120,7 +121,19 @@ SENSOR_METADATA = {
 
 
 def sensor_schema(sensor_type):
-    """Generate schema for a specific sensor type."""
+    """Generate schema for a specific sensor type.
+
+    Supports either a single sensor config or a list of configs with index.
+    Examples:
+        temperature_01:
+          name: "Temperature"
+
+        speed:  # Multiple sensors of same type
+          - name: "Wind Speed"
+            index: 0
+          - name: "Wind Gusts"
+            index: 1
+    """
     if sensor_type not in SENSOR_TYPES:
         return None
 
@@ -135,7 +148,13 @@ def sensor_schema(sensor_type):
     if state_class:
         schema_kwargs["state_class"] = state_class
 
-    return sensor.sensor_schema(**schema_kwargs)
+    # Base sensor schema with optional index
+    base_schema = sensor.sensor_schema(**schema_kwargs).extend({
+        cv.Optional(CONF_INDEX, default=0): cv.int_range(min=0, max=255),
+    })
+
+    # Allow either single config or list of configs
+    return cv.Any(base_schema, cv.ensure_list(base_schema))
 
 
 # Build CONFIG_SCHEMA dynamically with all sensor types
@@ -174,14 +193,22 @@ async def to_code(config):
     # Register each configured sensor type
     for sensor_type, type_info in SENSOR_TYPES.items():
         if sensor_type in config:
-            sensor_config = config[sensor_type]
+            sensor_configs = config[sensor_type]
             object_id = type_info[0]  # First element is object_id
 
-            # Create the ESPHome sensor
-            sens = await sensor.new_sensor(sensor_config)
+            # Normalize to list (handles both single config and list of configs)
+            if not isinstance(sensor_configs, list):
+                sensor_configs = [sensor_configs]
 
-            # Register sensor with device (object_id, sensor*)
-            cg.add(device_var.add_sensor(object_id, sens))
+            for sensor_config in sensor_configs:
+                # Get index (default 0)
+                index = sensor_config.get(CONF_INDEX, 0)
+
+                # Create the ESPHome sensor
+                sens = await sensor.new_sensor(sensor_config)
+
+                # Register sensor with device (object_id, index, sensor*)
+                cg.add(device_var.add_sensor(object_id, index, sens))
 
     # Register device with hub
     cg.add(hub.register_device(device_var))

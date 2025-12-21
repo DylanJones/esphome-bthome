@@ -152,10 +152,14 @@ sensor:
               id(rain_daily).publish_state(0);
             }
             last_rain = current;
-  # Wind speed (speed object 0x44)
+  # Wind speed (speed object 0x44) - device sends two values: speed and gusts
   speed:
-    name: "Wind Speed"
-    id: wind_speed
+    - name: "Wind Speed"
+      id: wind_speed
+      index: 0
+    - name: "Wind Gusts"
+      id: wind_gusts_sensor
+      index: 1
   # Wind direction (direction object 0x5E)
   direction:
     name: "Wind Direction"
@@ -174,6 +178,7 @@ sensor:
   # Dewpoint (0x08)
   dewpoint:
     name: "Dewpoint"
+    id: dewpoint_sensor
 
 # Rain rate (change since last reading)
 - platform: template
@@ -218,12 +223,15 @@ sensor:
     return NAN;
   update_interval: 10s
 
-# Wind gusts placeholder (TODO: add sensor index support to bthome_receiver)
+# Wind gusts reference (uses sensor from bthome_receiver with index: 1)
 - platform: template
   id: wind_gusts
-  name: "Wind Gusts"
+  name: "Wind Gusts Display"
   unit_of_measurement: "m/s"
   accuracy_decimals: 1
+  internal: true
+  lambda: return id(wind_gusts_sensor).state;
+  update_interval: 10s
 
 # Extend display with weather layout - compass style
 display:
@@ -239,6 +247,7 @@ display:
     #define ICON_HUMIDITY "\U000F058E"
     #define ICON_RAIN "\U000F0597"
     #define ICON_SOLAR "\U000F05A8"
+    #define ICON_DEWPOINT "\U000F0F54"
 
     // === HEADER: Location + Date/Time ===
     it.print(M, 8, id(font_label), TextAlign::TOP_LEFT, "Weather Station");
@@ -375,6 +384,26 @@ display:
       it.printf(main_x + 360, sec_y + 30, id(font_unit), TextAlign::TOP_LEFT, "%.1f m/s", id(wind_gusts).state);
     } else {
       it.print(main_x + 360, sec_y + 30, id(font_unit), TextAlign::TOP_LEFT, "-- m/s");
+    }
+
+    // === THIRD ROW: Dewpoint and Pressure ===
+    int third_y = sec_y + 70;
+
+    // Dewpoint
+    it.print(main_x, third_y, id(icon_mdi), TextAlign::TOP_LEFT, ICON_DEWPOINT);
+    it.print(main_x + 55, third_y + 5, id(font_label), TextAlign::TOP_LEFT, "Dewpoint");
+    if (id(dewpoint_sensor).has_state() && !std::isnan(id(dewpoint_sensor).state)) {
+      it.printf(main_x + 55, third_y + 30, id(font_unit), TextAlign::TOP_LEFT, "%.1f C", id(dewpoint_sensor).state);
+    } else {
+      it.print(main_x + 55, third_y + 30, id(font_unit), TextAlign::TOP_LEFT, "-- C");
+    }
+
+    // Pressure
+    it.print(main_x + 180, third_y + 5, id(font_label), TextAlign::TOP_LEFT, "Pressure");
+    if (id(pressure_sensor).has_state() && !std::isnan(id(pressure_sensor).state)) {
+      it.printf(main_x + 180, third_y + 30, id(font_unit), TextAlign::TOP_LEFT, "%.0f hPa", id(pressure_sensor).state);
+    } else {
+      it.print(main_x + 180, third_y + 30, id(font_unit), TextAlign::TOP_LEFT, "-- hPa");
     }
 
     // === LINE GRAPHS AREA (bottom) - 24h history ===

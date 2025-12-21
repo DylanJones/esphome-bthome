@@ -37,10 +37,7 @@ CONF_ON_BUTTON = "on_button"
 CONF_ON_DIMMER = "on_dimmer"
 CONF_EVENT = "event"
 CONF_BUTTON_INDEX = "button_index"
-CONF_DUMP_ADVERTISEMENTS = "dump_advertisements"
-
-# Define int8_t type (not available in esphome.codegen)
-int8 = cg.global_ns.namespace("int8_t")
+CONF_DUMP_INTERVAL = "dump_interval"
 
 bthome_receiver_ns = cg.esphome_ns.namespace("bthome_receiver")
 # Note: BTHomeReceiverHub class definition depends on BLE stack at runtime
@@ -55,8 +52,10 @@ BTHomeTextSensor = bthome_receiver_ns.class_("BTHomeTextSensor")
 BTHomeButtonTrigger = bthome_receiver_ns.class_(
     "BTHomeButtonTrigger", automation.Trigger.template()
 )
+# int8_t type for dimmer trigger parameter
+int8_t = cg.global_ns.class_("int8_t")
 BTHomeDimmerTrigger = bthome_receiver_ns.class_(
-    "BTHomeDimmerTrigger", automation.Trigger.template(int8)
+    "BTHomeDimmerTrigger", automation.Trigger.template(int8_t)
 )
 
 # =============================================================================
@@ -225,8 +224,8 @@ _BASE_SCHEMA = cv.Schema(
         cv.Optional(esp32_ble_tracker.CONF_ESP32_BLE_ID): cv.use_id(
             esp32_ble_tracker.ESP32BLETracker
         ),
-        # Discovery mode: dump all BTHome advertisements to log for configuration
-        cv.Optional(CONF_DUMP_ADVERTISEMENTS, default=False): cv.boolean,
+        # Interval for periodic dump of all detected devices (0 = disabled)
+        cv.Optional(CONF_DUMP_INTERVAL): cv.positive_time_period_milliseconds,
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
@@ -252,9 +251,9 @@ async def to_code(config):
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
 
-    # Set dump_advertisements mode
-    if config.get(CONF_DUMP_ADVERTISEMENTS, False):
-        cg.add(var.set_dump_advertisements(True))
+    # Set dump interval for periodic summary (0 = disabled)
+    if CONF_DUMP_INTERVAL in config:
+        cg.add(var.set_dump_interval(config[CONF_DUMP_INTERVAL]))
 
     ble_stack = config.get(CONF_BLE_STACK, BLE_STACK_BLUEDROID)
 
@@ -286,6 +285,9 @@ async def to_code(config):
         add_idf_sdkconfig_option("CONFIG_BT_NIMBLE_MAX_CONNECTIONS", 0)
         add_idf_sdkconfig_option("CONFIG_BT_NIMBLE_MAX_BONDS", 0)
         add_idf_sdkconfig_option("CONFIG_BT_NIMBLE_PINNED_TO_CORE", 0)
+
+        # Disable NimBLE logging completely
+        add_idf_sdkconfig_option("CONFIG_BT_NIMBLE_LOG_LEVEL", 0)  # 0 = NONE
     else:
         # Bluedroid stack - use esp32_ble_tracker
         cg.add_define("USE_BTHOME_RECEIVER_BLUEDROID")

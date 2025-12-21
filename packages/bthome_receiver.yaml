@@ -8,7 +8,7 @@ external_components:
   components: [ bthome_receiver ]
 
 # BTHome Receiver Hub - uses NimBLE for lightweight BLE scanning
-# Set dump_advertisements: true to discover new devices
+# Set dump_interval to periodically log all detected BTHome devices
 bthome_receiver:
-  dump_advertisements: true
+  dump_interval: 1min
   ble_stack: nimble
