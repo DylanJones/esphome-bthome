@@ -26,6 +26,7 @@ packages:
   widgets: !include packages/display_widgets.yaml
 
 logger:
+  level: WARN
 api:
 
 wifi:

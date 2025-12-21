@@ -897,7 +897,14 @@ void BTHomeDevice::parse_measurements_(const uint8_t *data, size_t len) {
     // Look up standard object type
     auto it = OBJECT_TYPE_MAP.find(object_id);
     if (it == OBJECT_TYPE_MAP.end()) {
-      ESP_LOGW(TAG, "Unknown object ID: 0x%02X", object_id);
+      // Dump entire packet for debugging unknown object IDs
+      std::string hex_dump;
+      for (size_t i = 0; i < len; i++) {
+        char hex[4];
+        snprintf(hex, sizeof(hex), "%02X ", data[i]);
+        hex_dump += hex;
+      }
+      ESP_LOGW(TAG, "Unknown object ID: 0x%02X at pos %d, full packet: %s", object_id, pos - 1, hex_dump.c_str());
       // Skip this measurement - we don't know its size, so we have to stop parsing
       break;
     }
