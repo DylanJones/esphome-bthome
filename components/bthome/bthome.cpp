@@ -225,7 +225,7 @@ void BTHome::setup() {
 }
 
 void BTHome::loop() {
-  uint32_t now = millis();
+  uint32_t now = esp_timer_get_time() / 1000;  // Convert microseconds to milliseconds
 
   // Handle retransmissions
   if (this->retransmit_remaining_ > 0 && this->advertising_) {
