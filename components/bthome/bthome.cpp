@@ -170,7 +170,7 @@ void BTHome::setup() {
 
   // Set up advertising parameters
   this->adv_param_ = BT_LE_ADV_PARAM_INIT(
-      BT_LE_ADV_OPT_USE_IDENTITY,
+      BT_LE_ADV_OPT_USE_IDENTITY | BT_LE_ADV_OPT_SCANNABLE,
       BT_GAP_ADV_FAST_INT_MIN_2,
       BT_GAP_ADV_FAST_INT_MAX_2,
       nullptr
